@@ -10,7 +10,7 @@ use tui_textarea::{Input, Key, TextArea};
 
 use crate::backend::{Command, ModalChoice, Mode, ViewState};
 use crate::commands::{
-    self, Action, CommandDef, CompletionCtx, ParseError, COMMANDS,
+    self, Action, CommandSpec, CompletionCtx, ModelChoice, ParseError, PlanToggle, COMMANDS,
 };
 use crate::ui;
 
@@ -193,14 +193,18 @@ impl Frontend {
                 return;
             }
             (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
-                let next = if self.view.mode == Mode::Plan { "off" } else { "on" };
+                let next = if self.view.mode == Mode::Plan {
+                    PlanToggle::Off
+                } else {
+                    PlanToggle::On
+                };
                 self.run_hotkey(Action::Plan(next));
                 return;
             }
             (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
-                let order = ["claude", "opus", "haiku"];
+                let order = [ModelChoice::Claude, ModelChoice::Opus, ModelChoice::Haiku];
                 let cur = self.view.model.strip_prefix("mock-").unwrap_or(&self.view.model);
-                let i = order.iter().position(|m| *m == cur).unwrap_or(0);
+                let i = order.iter().position(|m| m.slug() == cur).unwrap_or(0);
                 let next = order[(i + 1) % order.len()];
                 self.run_hotkey(Action::Model(next));
                 return;
@@ -209,7 +213,11 @@ impl Frontend {
                 if self.view.streaming {
                     return;
                 }
-                let order = ["chat", "code", "tool"];
+                let order = [
+                    crate::commands::DemoScenario::Chat,
+                    crate::commands::DemoScenario::Code,
+                    crate::commands::DemoScenario::Tool,
+                ];
                 let pick = order[self.demo_idx % order.len()];
                 self.demo_idx = (self.demo_idx + 1) % order.len();
                 self.run_hotkey(Action::Demo(pick));
@@ -338,8 +346,8 @@ impl Frontend {
                 let names: Vec<&'static str> = cmd
                     .subs
                     .iter()
-                    .filter(|(n, _)| n.starts_with(&prefix))
-                    .map(|(n, _)| *n)
+                    .filter(|s| s.name.starts_with(&prefix))
+                    .map(|s| s.name)
                     .collect();
                 let head = build_sub_head(&current, cmd);
                 self.tab_complete(&head, &prefix, &names, |_| false);
@@ -398,7 +406,7 @@ impl Frontend {
             }
             Err(err) => {
                 self.replace_input("");
-                self.send(Command::ShowSystem(err.message()));
+                self.send(Command::ShowSystem(err.to_string()));
             }
         }
     }
@@ -413,6 +421,6 @@ impl Frontend {
     }
 }
 
-fn build_sub_head(_input: &str, cmd: &CommandDef) -> String {
+fn build_sub_head(_input: &str, cmd: &CommandSpec) -> String {
     format!("{} ", cmd.name)
 }

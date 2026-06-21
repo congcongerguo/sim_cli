@@ -2,6 +2,7 @@ mod backend;
 mod commands;
 mod event;
 mod frontend;
+mod help;
 mod json_framer;
 mod message;
 mod mock_llm;

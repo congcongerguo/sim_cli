@@ -1,81 +1,249 @@
-#[derive(Debug)]
-pub struct CommandDef {
-    pub name: &'static str,
-    pub desc: &'static str,
-    pub subs: &'static [(&'static str, &'static str)],
+//! Command registry: a single table drives parsing, completion, and dispatch.
+//!
+//! Adding a new command: append one row to [`COMMANDS`], add one variant to
+//! [`Action`], and add one match arm in `backend::dispatch`. The compiler
+//! enforces all three exist; there is no runtime string matching here that
+//! can fall out of sync.
+
+use std::fmt;
+
+use crate::transport::Protocol;
+
+// -----------------------------------------------------------------------------
+// Typed action arguments
+// -----------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelChoice {
+    Claude,
+    Opus,
+    Haiku,
 }
 
-pub const COMMANDS: &[CommandDef] = &[
-    CommandDef {
-        name: "help",
-        desc: "show available commands",
-        subs: &[],
-    },
-    CommandDef {
-        name: "clear",
-        desc: "clear the conversation",
-        subs: &[],
-    },
-    CommandDef {
-        name: "exit",
-        desc: "leave the CLI",
-        subs: &[],
-    },
-    CommandDef {
-        name: "model",
-        desc: "switch model: model <claude|opus|haiku>",
-        subs: &[
-            ("claude", "use mock-claude"),
-            ("opus", "use mock-opus"),
-            ("haiku", "use mock-haiku"),
-        ],
-    },
-    CommandDef {
-        name: "plan",
-        desc: "set plan mode: plan <on|off>",
-        subs: &[
-            ("on", "enable plan mode"),
-            ("off", "disable plan mode"),
-        ],
-    },
-    CommandDef {
-        name: "demo",
-        desc: "show a UI demo: demo <chat|code|tool>",
-        subs: &[
-            ("chat", "stream a markdown chat reply"),
-            ("code", "stream a syntect-highlighted code reply"),
-            ("tool", "show a tool card with permission modal"),
-        ],
-    },
-    CommandDef {
-        name: "con",
-        desc: "connect a transport: con <tcp>",
-        subs: &[("tcp", "TCP echo (127.0.0.1:7878)")],
-    },
-    CommandDef {
-        name: "close",
-        desc: "disconnect the current transport",
-        subs: &[],
-    },
-    CommandDef {
-        name: "send",
-        desc: "build a JSON message, send it, await reply",
-        subs: &[],
-    },
-];
+impl ModelChoice {
+    pub fn slug(self) -> &'static str {
+        match self {
+            ModelChoice::Claude => "claude",
+            ModelChoice::Opus => "opus",
+            ModelChoice::Haiku => "haiku",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlanToggle {
+    On,
+    Off,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DemoScenario {
+    Chat,
+    Code,
+    Tool,
+}
+
+// -----------------------------------------------------------------------------
+// Action enum: the typed command the backend executes
+// -----------------------------------------------------------------------------
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Action {
     Help,
     Clear,
     Exit,
-    Model(&'static str),
-    Plan(&'static str),
-    Demo(&'static str),
-    Connect(&'static str),
+    Model(ModelChoice),
+    Plan(PlanToggle),
+    Demo(DemoScenario),
+    Connect(Protocol),
     Disconnect,
     Send,
 }
+
+// -----------------------------------------------------------------------------
+// Command table
+// -----------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub struct SubSpec {
+    pub name: &'static str,
+    pub desc: &'static str,
+}
+
+/// Description of a CLI command. `build` is called by the parser after args
+/// have been validated against `subs`; it returns the typed [`Action`].
+#[derive(Debug)]
+pub struct CommandSpec {
+    pub name: &'static str,
+    pub desc: &'static str,
+    pub subs: &'static [SubSpec],
+    /// Build the action from the (already-validated) sub-name. `None` for
+    /// no-arg commands; `Some(name)` is guaranteed to be one of `subs[i].name`.
+    pub build: fn(Option<&'static str>) -> Action,
+}
+
+const MODEL_SUBS: &[SubSpec] = &[
+    SubSpec { name: "claude", desc: "use mock-claude" },
+    SubSpec { name: "opus", desc: "use mock-opus" },
+    SubSpec { name: "haiku", desc: "use mock-haiku" },
+];
+
+const PLAN_SUBS: &[SubSpec] = &[
+    SubSpec { name: "on", desc: "enable plan mode" },
+    SubSpec { name: "off", desc: "disable plan mode" },
+];
+
+const DEMO_SUBS: &[SubSpec] = &[
+    SubSpec { name: "chat", desc: "stream a markdown chat reply" },
+    SubSpec { name: "code", desc: "stream a syntect-highlighted code reply" },
+    SubSpec { name: "tool", desc: "show a tool card with permission modal" },
+];
+
+const CON_SUBS: &[SubSpec] = &[
+    SubSpec { name: "tcp", desc: "TCP echo (127.0.0.1:7878)" },
+];
+
+pub static COMMANDS: &[CommandSpec] = &[
+    CommandSpec {
+        name: "help",
+        desc: "show available commands",
+        subs: &[],
+        build: |_| Action::Help,
+    },
+    CommandSpec {
+        name: "clear",
+        desc: "clear the conversation",
+        subs: &[],
+        build: |_| Action::Clear,
+    },
+    CommandSpec {
+        name: "exit",
+        desc: "leave the CLI",
+        subs: &[],
+        build: |_| Action::Exit,
+    },
+    CommandSpec {
+        name: "model",
+        desc: "switch model: model <claude|opus|haiku>",
+        subs: MODEL_SUBS,
+        build: |s| Action::Model(parse_model(s.expect("validated"))),
+    },
+    CommandSpec {
+        name: "plan",
+        desc: "set plan mode: plan <on|off>",
+        subs: PLAN_SUBS,
+        build: |s| Action::Plan(parse_plan(s.expect("validated"))),
+    },
+    CommandSpec {
+        name: "demo",
+        desc: "show a UI demo: demo <chat|code|tool>",
+        subs: DEMO_SUBS,
+        build: |s| Action::Demo(parse_demo(s.expect("validated"))),
+    },
+    CommandSpec {
+        name: "con",
+        desc: "connect a transport: con <tcp>",
+        subs: CON_SUBS,
+        build: |s| Action::Connect(parse_proto(s.expect("validated"))),
+    },
+    CommandSpec {
+        name: "close",
+        desc: "disconnect the current transport",
+        subs: &[],
+        build: |_| Action::Disconnect,
+    },
+    CommandSpec {
+        name: "send",
+        desc: "build a JSON message, send it, await reply",
+        subs: &[],
+        build: |_| Action::Send,
+    },
+];
+
+fn parse_model(s: &str) -> ModelChoice {
+    match s {
+        "claude" => ModelChoice::Claude,
+        "opus" => ModelChoice::Opus,
+        "haiku" => ModelChoice::Haiku,
+        other => panic!("MODEL_SUBS / parse_model drift: {other}"),
+    }
+}
+
+fn parse_plan(s: &str) -> PlanToggle {
+    match s {
+        "on" => PlanToggle::On,
+        "off" => PlanToggle::Off,
+        other => panic!("PLAN_SUBS / parse_plan drift: {other}"),
+    }
+}
+
+fn parse_demo(s: &str) -> DemoScenario {
+    match s {
+        "chat" => DemoScenario::Chat,
+        "code" => DemoScenario::Code,
+        "tool" => DemoScenario::Tool,
+        other => panic!("DEMO_SUBS / parse_demo drift: {other}"),
+    }
+}
+
+fn parse_proto(s: &str) -> Protocol {
+    Protocol::from_name(s).expect("CON_SUBS / Protocol::from_name drift")
+}
+
+// -----------------------------------------------------------------------------
+// Error type
+// -----------------------------------------------------------------------------
+
+#[derive(Debug)]
+pub enum ParseError {
+    Empty,
+    UnknownCommand(String),
+    AmbiguousCommand(Vec<&'static str>),
+    MissingArg(&'static CommandSpec),
+    UnknownArg(&'static CommandSpec, String),
+    AmbiguousArg(&'static CommandSpec, Vec<&'static str>),
+    UnexpectedArg(&'static CommandSpec, String),
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ParseError::Empty => write!(f, "empty input"),
+            ParseError::UnknownCommand(s) => write!(f, "unknown command: {s}"),
+            ParseError::AmbiguousCommand(list) => {
+                write!(f, "ambiguous command: {}", list.join(", "))
+            }
+            ParseError::MissingArg(def) => {
+                let opts = sub_names(def).join(" | ");
+                write!(f, "missing arg for '{}', expected: {}", def.name, opts)
+            }
+            ParseError::UnknownArg(def, s) => {
+                let opts = sub_names(def).join(" | ");
+                write!(
+                    f,
+                    "unknown arg '{s}' for '{}', expected: {opts}",
+                    def.name
+                )
+            }
+            ParseError::AmbiguousArg(def, list) => {
+                write!(f, "ambiguous arg for '{}': {}", def.name, list.join(", "))
+            }
+            ParseError::UnexpectedArg(def, s) => {
+                write!(f, "'{}' takes no arguments (got '{s}')", def.name)
+            }
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+fn sub_names(def: &CommandSpec) -> Vec<&'static str> {
+    def.subs.iter().map(|s| s.name).collect()
+}
+
+// -----------------------------------------------------------------------------
+// Lookup helpers
+// -----------------------------------------------------------------------------
 
 #[derive(Debug)]
 pub enum Resolve<T> {
@@ -84,53 +252,7 @@ pub enum Resolve<T> {
     None,
 }
 
-#[derive(Debug)]
-pub enum ParseError {
-    Empty,
-    UnknownCommand(String),
-    AmbiguousCommand(Vec<&'static str>),
-    MissingArg(&'static CommandDef),
-    UnknownArg(&'static CommandDef, String),
-    AmbiguousArg(&'static CommandDef, Vec<&'static str>),
-    UnexpectedArg(&'static CommandDef, String),
-}
-
-impl ParseError {
-    pub fn message(&self) -> String {
-        match self {
-            ParseError::Empty => "empty input".into(),
-            ParseError::UnknownCommand(s) => format!("unknown command: {s}"),
-            ParseError::AmbiguousCommand(list) => {
-                format!("ambiguous command: {}", list.join(", "))
-            }
-            ParseError::MissingArg(def) => {
-                let opts: Vec<&str> = def.subs.iter().map(|(n, _)| *n).collect();
-                format!(
-                    "missing arg for '{}', expected: {}",
-                    def.name,
-                    opts.join(" | ")
-                )
-            }
-            ParseError::UnknownArg(def, s) => {
-                let opts: Vec<&str> = def.subs.iter().map(|(n, _)| *n).collect();
-                format!(
-                    "unknown arg '{}' for '{}', expected: {}",
-                    s,
-                    def.name,
-                    opts.join(" | ")
-                )
-            }
-            ParseError::AmbiguousArg(def, list) => {
-                format!("ambiguous arg for '{}': {}", def.name, list.join(", "))
-            }
-            ParseError::UnexpectedArg(def, s) => {
-                format!("'{}' takes no arguments (got '{}')", def.name, s)
-            }
-        }
-    }
-}
-
-pub fn find_command(name: &str) -> Option<&'static CommandDef> {
+pub fn find_command(name: &str) -> Option<&'static CommandSpec> {
     COMMANDS.iter().find(|c| c.name == name)
 }
 
@@ -146,26 +268,21 @@ pub fn matching_commands(prefix: &str) -> Vec<(&'static str, &'static str)> {
         .collect()
 }
 
-pub fn matching_subs(
-    cmd: &CommandDef,
-    prefix: &str,
-) -> Vec<(&'static str, &'static str)> {
+pub fn matching_subs(cmd: &CommandSpec, prefix: &str) -> Vec<(&'static str, &'static str)> {
     cmd.subs
         .iter()
-        .filter(|(name, _)| name.starts_with(prefix))
-        .copied()
+        .filter(|s| s.name.starts_with(prefix))
+        .map(|s| (s.name, s.desc))
         .collect()
 }
 
-pub fn resolve_command_prefix(prefix: &str) -> Resolve<&'static CommandDef> {
+pub fn resolve_command_prefix(prefix: &str) -> Resolve<&'static CommandSpec> {
     let p = prefix.trim();
     if p.is_empty() {
         return Resolve::None;
     }
-    let hits: Vec<&'static CommandDef> = COMMANDS
-        .iter()
-        .filter(|c| c.name.starts_with(p))
-        .collect();
+    let hits: Vec<&'static CommandSpec> =
+        COMMANDS.iter().filter(|c| c.name.starts_with(p)).collect();
     match hits.len() {
         0 => Resolve::None,
         1 => Resolve::Unique(hits[0]),
@@ -173,15 +290,15 @@ pub fn resolve_command_prefix(prefix: &str) -> Resolve<&'static CommandDef> {
     }
 }
 
-pub fn resolve_sub_prefix(cmd: &CommandDef, prefix: &str) -> Resolve<&'static str> {
+pub fn resolve_sub_prefix(cmd: &CommandSpec, prefix: &str) -> Resolve<&'static str> {
     if prefix.is_empty() {
         return Resolve::None;
     }
     let hits: Vec<&'static str> = cmd
         .subs
         .iter()
-        .filter(|(name, _)| name.starts_with(prefix))
-        .map(|(name, _)| *name)
+        .filter(|s| s.name.starts_with(prefix))
+        .map(|s| s.name)
         .collect();
     match hits.len() {
         0 => Resolve::None,
@@ -198,9 +315,9 @@ pub fn longest_common_prefix(names: &[&str]) -> String {
     let mut end = first.len();
     for s in &names[1..] {
         end = end.min(s.len());
-        let mut i = 0;
         let a = first.as_bytes();
         let b = s.as_bytes();
+        let mut i = 0;
         while i < end && a[i] == b[i] {
             i += 1;
         }
@@ -212,69 +329,53 @@ pub fn longest_common_prefix(names: &[&str]) -> String {
     first[..end].to_string()
 }
 
-/// What the user is currently editing — used by Tab completion.
+// -----------------------------------------------------------------------------
+// Completion context
+// -----------------------------------------------------------------------------
+
 #[derive(Debug)]
 pub enum CompletionCtx {
-    /// Editing the command name; `prefix` is what's been typed so far.
     Command { prefix: String },
-    /// Command resolved; editing the sub-command. `prefix` may be empty.
-    Sub {
-        cmd: &'static CommandDef,
-        prefix: String,
-    },
-    /// Nothing useful to complete (e.g. command takes no args, or extra tokens).
+    Sub { cmd: &'static CommandSpec, prefix: String },
     None,
 }
 
 pub fn completion_ctx(input: &str) -> CompletionCtx {
-    // If there's no whitespace, user is still typing the command.
     let has_ws = input.chars().any(char::is_whitespace);
     if !has_ws {
-        return CompletionCtx::Command {
-            prefix: input.to_string(),
-        };
+        return CompletionCtx::Command { prefix: input.to_string() };
     }
 
-    // Split into first token and the rest.
     let mut it = input.splitn(2, char::is_whitespace);
     let cmd_tok = it.next().unwrap_or("").trim();
     let rest = it.next().unwrap_or("");
 
     if cmd_tok.is_empty() {
-        return CompletionCtx::Command {
-            prefix: rest.trim_start().to_string(),
-        };
+        return CompletionCtx::Command { prefix: rest.trim_start().to_string() };
     }
 
-    // Resolve the command. Must be unique to enter sub-completion.
     let cmd = match resolve_command_prefix(cmd_tok) {
         Resolve::Unique(c) => c,
-        _ => {
-            return CompletionCtx::Command {
-                prefix: cmd_tok.to_string(),
-            };
-        }
+        _ => return CompletionCtx::Command { prefix: cmd_tok.to_string() },
     };
 
     if cmd.subs.is_empty() {
         return CompletionCtx::None;
     }
 
-    // The "current" sub prefix is the last whitespace-separated token of `rest`,
-    // or empty if rest ends with whitespace / is empty.
     let sub_prefix: &str = if rest.is_empty() || rest.ends_with(char::is_whitespace) {
         ""
     } else {
         rest.split_whitespace().next_back().unwrap_or("")
     };
 
-    CompletionCtx::Sub {
-        cmd,
-        prefix: sub_prefix.to_string(),
-    }
+    CompletionCtx::Sub { cmd, prefix: sub_prefix.to_string() }
 }
 
-/// Parse a fully-typed input line into an Action, or return a ParseError.
+// -----------------------------------------------------------------------------
+// Parse a fully-typed input line into an Action
+// -----------------------------------------------------------------------------
+
 pub fn parse_action(input: &str) -> Result<Action, ParseError> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
@@ -294,14 +395,7 @@ pub fn parse_action(input: &str) -> Result<Action, ParseError> {
         if !rest.is_empty() {
             return Err(ParseError::UnexpectedArg(cmd, rest.join(" ")));
         }
-        return Ok(match cmd.name {
-            "help" => Action::Help,
-            "clear" => Action::Clear,
-            "exit" => Action::Exit,
-            "close" => Action::Disconnect,
-            "send" => Action::Send,
-            other => unreachable!("no-arg command without case: {other}"),
-        });
+        return Ok((cmd.build)(None));
     }
 
     if rest.is_empty() {
@@ -310,21 +404,18 @@ pub fn parse_action(input: &str) -> Result<Action, ParseError> {
     if rest.len() > 1 {
         return Err(ParseError::UnexpectedArg(cmd, rest[1..].join(" ")));
     }
-    let sub_tok = rest[0];
-    let sub_name = match resolve_sub_prefix(cmd, sub_tok) {
+    let sub_name = match resolve_sub_prefix(cmd, rest[0]) {
         Resolve::Unique(name) => name,
         Resolve::Ambiguous(list) => return Err(ParseError::AmbiguousArg(cmd, list)),
-        Resolve::None => return Err(ParseError::UnknownArg(cmd, sub_tok.to_string())),
+        Resolve::None => return Err(ParseError::UnknownArg(cmd, rest[0].to_string())),
     };
 
-    Ok(match cmd.name {
-        "model" => Action::Model(sub_name),
-        "plan" => Action::Plan(sub_name),
-        "demo" => Action::Demo(sub_name),
-        "con" => Action::Connect(sub_name),
-        other => unreachable!("sub-arg command without case: {other}"),
-    })
+    Ok((cmd.build)(Some(sub_name)))
 }
+
+// -----------------------------------------------------------------------------
+// Tests
+// -----------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -347,17 +438,17 @@ mod tests {
 
     #[test]
     fn unique_with_sub() {
-        assert_unique(Action::Plan("on"), "plan on");
-        assert_unique(Action::Plan("on"), "p on");
-        assert_unique(Action::Plan("off"), "plan of");
-        assert_unique(Action::Demo("chat"), "demo chat");
-        assert_unique(Action::Demo("code"), "d co");
-        assert_unique(Action::Model("haiku"), "m h");
+        assert_unique(Action::Plan(PlanToggle::On), "plan on");
+        assert_unique(Action::Plan(PlanToggle::On), "p on");
+        assert_unique(Action::Plan(PlanToggle::Off), "plan of");
+        assert_unique(Action::Demo(DemoScenario::Chat), "demo chat");
+        assert_unique(Action::Demo(DemoScenario::Code), "d co");
+        assert_unique(Action::Model(ModelChoice::Haiku), "m h");
+        assert_unique(Action::Connect(Protocol::Tcp), "con tcp");
     }
 
     #[test]
     fn ambiguous_sub() {
-        // 'o' matches both 'on' and 'off'
         match parse_action("plan o") {
             Err(ParseError::AmbiguousArg(cmd, list)) => {
                 assert_eq!(cmd.name, "plan");
@@ -365,7 +456,6 @@ mod tests {
             }
             other => panic!("expected AmbiguousArg, got {other:?}"),
         }
-        // 'c' matches both 'chat' and 'code'
         match parse_action("demo c") {
             Err(ParseError::AmbiguousArg(cmd, list)) => {
                 assert_eq!(cmd.name, "demo");
@@ -380,7 +470,7 @@ mod tests {
         match parse_action("plan") {
             Err(ParseError::MissingArg(cmd)) => {
                 assert_eq!(cmd.name, "plan");
-                let opts: Vec<&str> = cmd.subs.iter().map(|(n, _)| *n).collect();
+                let opts: Vec<&str> = cmd.subs.iter().map(|s| s.name).collect();
                 assert_eq!(opts, vec!["on", "off"]);
             }
             other => panic!("expected MissingArg, got {other:?}"),
@@ -389,10 +479,6 @@ mod tests {
 
     #[test]
     fn ambiguous_command() {
-        // 'h' is unique (only help); but if we add more starting with 'h' this test
-        // would change. Currently nothing else collides at single-letter prefix.
-        // Use a known ambiguous prefix: nothing in our set is currently ambiguous
-        // at depth-1, so we craft one via no-prefix garbage:
         match parse_action("xy") {
             Err(ParseError::UnknownCommand(s)) => assert_eq!(s, "xy"),
             other => panic!("expected UnknownCommand, got {other:?}"),
@@ -465,5 +551,37 @@ mod tests {
         assert_eq!(longest_common_prefix(&["on", "off"]), "o");
         assert_eq!(longest_common_prefix(&[]), "");
         assert_eq!(longest_common_prefix(&["abc"]), "abc");
+    }
+
+    /// Drift-prevention: every sub declared in the table must be accepted by
+    /// `parse_action` and produce a matching Action. If `parse_*` panics for
+    /// a sub, this test catches it.
+    #[test]
+    fn every_spec_builds_action_for_every_sub() {
+        for spec in COMMANDS {
+            if spec.subs.is_empty() {
+                let input = spec.name;
+                let action = parse_action(input)
+                    .unwrap_or_else(|e| panic!("'{input}' should parse: {e}"));
+                let expected = (spec.build)(None);
+                assert_eq!(
+                    action, expected,
+                    "build({}, None) must match parse_action result",
+                    spec.name
+                );
+            } else {
+                for sub in spec.subs {
+                    let input = format!("{} {}", spec.name, sub.name);
+                    let action = parse_action(&input)
+                        .unwrap_or_else(|e| panic!("'{input}' should parse: {e}"));
+                    let expected = (spec.build)(Some(sub.name));
+                    assert_eq!(
+                        action, expected,
+                        "build({}, Some({})) must match parse_action result",
+                        spec.name, sub.name
+                    );
+                }
+            }
+        }
     }
 }
