@@ -24,7 +24,10 @@ pub fn spawn(addr: String, ev_tx: mpsc::Sender<TransportEvent>) -> TransportHand
             Ok(s) => s,
             Err(e) => {
                 let _ = ev_tx
-                    .send(TransportEvent::Error(format!("connect failed: {e}")))
+                    .send(TransportEvent::Error(format!(
+                        "connect failed: {:?}",
+                        e.kind()
+                    )))
                     .await;
                 return;
             }
@@ -78,7 +81,7 @@ pub fn spawn(addr: String, ev_tx: mpsc::Sender<TransportEvent>) -> TransportHand
                         if closed { break; }
                     }
                     Err(e) => {
-                        let _ = ev_tx.send(TransportEvent::Error(format!("read: {e}"))).await;
+                        let _ = ev_tx.send(TransportEvent::Error(format!("read: {:?}", e.kind()))).await;
                         break;
                     }
                 },
@@ -87,11 +90,11 @@ pub fn spawn(addr: String, ev_tx: mpsc::Sender<TransportEvent>) -> TransportHand
                         // Caller is expected to hand us a complete JSON value;
                         // we just push the raw bytes onto the stream.
                         if let Err(e) = write.write_all(payload.as_bytes()).await {
-                            let _ = ev_tx.send(TransportEvent::Error(format!("write: {e}"))).await;
+                            let _ = ev_tx.send(TransportEvent::Error(format!("write: {:?}", e.kind()))).await;
                             break;
                         }
                         if let Err(e) = write.flush().await {
-                            let _ = ev_tx.send(TransportEvent::Error(format!("flush: {e}"))).await;
+                            let _ = ev_tx.send(TransportEvent::Error(format!("flush: {:?}", e.kind()))).await;
                             break;
                         }
                     }
