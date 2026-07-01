@@ -1,31 +1,37 @@
 pub mod tcp;
+pub mod zmq;
 
 pub use crate::json_framer::JsonFramer;
 use tokio::sync::mpsc;
 
 pub const DEFAULT_TCP_ADDR: &str = "127.0.0.1:7878";
+pub const DEFAULT_ZMQ_ADDR: &str = "tcp://127.0.0.1:5555";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Protocol {
     Tcp,
+    Zmq,
 }
 
 impl Protocol {
     pub fn as_str(&self) -> &'static str {
         match self {
             Protocol::Tcp => "tcp",
+            Protocol::Zmq => "zmq",
         }
     }
 
     pub fn default_addr(&self) -> &'static str {
         match self {
             Protocol::Tcp => DEFAULT_TCP_ADDR,
+            Protocol::Zmq => DEFAULT_ZMQ_ADDR,
         }
     }
 
     pub fn from_name(name: &str) -> Option<Protocol> {
         match name {
             "tcp" => Some(Protocol::Tcp),
+            "zmq" => Some(Protocol::Zmq),
             _ => None,
         }
     }
@@ -53,5 +59,6 @@ pub fn spawn(
 ) -> TransportHandle {
     match protocol {
         Protocol::Tcp => tcp::spawn(addr, ev_tx),
+        Protocol::Zmq => zmq::spawn(addr, ev_tx),
     }
 }

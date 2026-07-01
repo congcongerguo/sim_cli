@@ -101,6 +101,7 @@ const DEMO_SUBS: &[SubSpec] = &[
 
 const CON_SUBS: &[SubSpec] = &[
     SubSpec { name: "tcp", desc: "TCP echo (127.0.0.1:7878)" },
+    SubSpec { name: "zmq", desc: "ZMQ pub/sub (sub tcp://127.0.0.1:5555 / pub tcp://127.0.0.1:5556)" },
 ];
 
 pub static COMMANDS: &[CommandSpec] = &[
@@ -142,7 +143,7 @@ pub static COMMANDS: &[CommandSpec] = &[
     },
     CommandSpec {
         name: "con",
-        desc: "connect a transport: con <tcp>",
+        desc: "connect a transport: con <tcp|zmq>",
         subs: CON_SUBS,
         build: |s| Action::Connect(parse_proto(s.expect("validated"))),
     },
@@ -445,6 +446,7 @@ mod tests {
         assert_unique(Action::Demo(DemoScenario::Code), "d co");
         assert_unique(Action::Model(ModelChoice::Haiku), "m h");
         assert_unique(Action::Connect(Protocol::Tcp), "con tcp");
+        assert_unique(Action::Connect(Protocol::Zmq), "con zmq");
     }
 
     #[test]
