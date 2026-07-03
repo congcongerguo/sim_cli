@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package sim;
+
+// Wire payload for the "pb" topic on the ZMQ pub/sub transport. Mirrors the
+// shape of the JSON ticks the server already publishes on the "json" topic, so
+// the two encodings are directly comparable end-to-end.
+message Tick {
+  uint64 seq = 1;
+  string msg = 2;
+}

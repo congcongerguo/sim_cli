@@ -41,7 +41,11 @@ impl Protocol {
 pub enum TransportEvent {
     Connecting { protocol: Protocol, addr: String },
     Connected { protocol: Protocol, addr: String },
-    Recv(String),
+    /// `encoding` is the wire encoding label — for ZMQ it is the pub/sub topic
+    /// ("json" or "pb"); for TCP it is always "json". `text` is the payload
+    /// normalized to a JSON string at the transport boundary (proto messages
+    /// are decoded to JSON here so the rest of the app stays encoding-agnostic).
+    Recv { encoding: String, text: String },
     Disconnected,
     Error(String),
 }

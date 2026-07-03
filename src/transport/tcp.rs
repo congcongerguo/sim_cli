@@ -64,7 +64,14 @@ pub fn spawn(addr: String, ev_tx: mpsc::Sender<TransportEvent>) -> TransportHand
                         while let Some(msg) = framer.next_message() {
                             match String::from_utf8(msg) {
                                 Ok(s) => {
-                                    if ev_tx.send(TransportEvent::Recv(s)).await.is_err() {
+                                    if ev_tx
+                                        .send(TransportEvent::Recv {
+                                            encoding: "json".into(),
+                                            text: s,
+                                        })
+                                        .await
+                                        .is_err()
+                                    {
                                         closed = true;
                                         break;
                                     }

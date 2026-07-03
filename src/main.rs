@@ -6,6 +6,7 @@ mod help;
 mod json_framer;
 mod message;
 mod mock_llm;
+mod proto;
 mod terminal;
 mod transport;
 mod ui;

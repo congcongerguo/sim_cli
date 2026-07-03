@@ -18,3 +18,7 @@ anyhow = "1"
 unicode-width = "0.2"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 zeromq = { version = "0.6", default-features = false, features = ["tokio-runtime", "tcp-transport"] }
+prost = "0.13"
+
+[build-dependencies]
+prost-build = "0.13"

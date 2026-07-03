@@ -28,6 +28,7 @@ pub enum ConnOutcome {
     RecvJson {
         n: u64,
         bytes: usize,
+        encoding: String,
     },
     RecvInvalid { raw: String, error: String },
     Error(String),
@@ -120,18 +121,18 @@ impl ConnSubsystem {
                 };
                 vec![ConnOutcome::Connected { protocol, addr }]
             }
-            TransportEvent::Recv(line) => {
-                let bytes = line.len();
-                match serde_json::from_str::<serde_json::Value>(&line) {
+            TransportEvent::Recv { encoding, text } => {
+                let bytes = text.len();
+                match serde_json::from_str::<serde_json::Value>(&text) {
                     Ok(v) => {
                         self.recv_counter += 1;
                         let n = self.recv_counter;
                         self.latest_recv = Some(v);
                         self.latest_recv_at = Some(Local::now());
-                        vec![ConnOutcome::RecvJson { n, bytes }]
+                        vec![ConnOutcome::RecvJson { n, bytes, encoding }]
                     }
                     Err(e) => vec![ConnOutcome::RecvInvalid {
-                        raw: line,
+                        raw: text,
                         error: e.to_string(),
                     }],
                 }
@@ -168,7 +169,9 @@ pub fn format(outcome: &ConnOutcome) -> String {
         ConnOutcome::NotConnected => "not connected — run 'con <protocol>' first".into(),
         ConnOutcome::Sent { line } => format!("→ send: {line}"),
         ConnOutcome::SendFailed(e) => format!("send failed: {e}"),
-        ConnOutcome::RecvJson { n, bytes } => format!("← recv #{n} ({bytes} bytes)"),
+        ConnOutcome::RecvJson { n, bytes, encoding } => {
+            format!("← recv #{n} ({encoding}, {bytes} bytes)")
+        }
         ConnOutcome::RecvInvalid { raw, error } => {
             format!("← recv (invalid JSON: {error})\nraw: {raw}")
         }
@@ -197,7 +200,7 @@ mod tests {
     #[test]
     fn handle_recv_with_valid_json_stores_value() {
         let mut c = ConnSubsystem::new();
-        let outs = c.handle_event(TransportEvent::Recv("{\"a\":1}".into()));
+        let outs = c.handle_event(TransportEvent::Recv { encoding: "json".into(), text: "{\"a\":1}".into() });
         assert!(matches!(outs.as_slice(), [ConnOutcome::RecvJson { n: 1, .. }]));
         assert!(c.latest_recv.is_some());
         assert!(c.latest_recv_at.is_some());
@@ -206,9 +209,12 @@ mod tests {
     #[test]
     fn handle_recv_with_garbage_keeps_previous_value() {
         let mut c = ConnSubsystem::new();
-        c.handle_event(TransportEvent::Recv("{\"a\":1}".into()));
+        c.handle_event(TransportEvent::Recv { encoding: "json".into(), text: "{\"a\":1}".into() });
         let snapshot = c.latest_recv.clone();
-        let outs = c.handle_event(TransportEvent::Recv("not json".into()));
+        let outs = c.handle_event(TransportEvent::Recv {
+            encoding: "json".into(),
+            text: "not json".into(),
+        });
         assert!(matches!(outs.as_slice(), [ConnOutcome::RecvInvalid { .. }]));
         assert_eq!(c.latest_recv, snapshot, "garbage frame must not clobber");
     }
