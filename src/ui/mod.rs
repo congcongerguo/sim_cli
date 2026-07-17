@@ -44,10 +44,13 @@ pub fn render(f: &mut Frame, fe: &Frontend) {
                 Constraint::Length(STATE_PANEL_WIDTH),
             ])
             .split(chunks[0]);
-        conversation::render(f, top[0], &fe.view, fe.scroll, fe.follow_tail);
+        // Border takes 2 lines; record visible lines for scroll step
+        fe.viewport_height.set(top[0].height.saturating_sub(2));
+        conversation::render(f, top[0], &fe.view, &fe.scroll, fe.follow_tail, &fe.prev_total_lines);
         state_panel::render(f, top[1], &fe.view);
     } else {
-        conversation::render(f, chunks[0], &fe.view, fe.scroll, fe.follow_tail);
+        fe.viewport_height.set(chunks[0].height.saturating_sub(2));
+        conversation::render(f, chunks[0], &fe.view, &fe.scroll, fe.follow_tail, &fe.prev_total_lines);
     }
 
     input::render(f, chunks[1], fe);

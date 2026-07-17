@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -9,7 +11,14 @@ use crate::message::Message;
 use crate::ui::markdown::render_markdown;
 use crate::ui::tool_card::tool_card_lines;
 
-pub fn render(f: &mut Frame, area: Rect, view: &ViewState, scroll: u16, follow_tail: bool) {
+pub fn render(
+    f: &mut Frame,
+    area: Rect,
+    view: &ViewState,
+    scroll: &Cell<u16>,
+    follow_tail: bool,
+    prev_total_lines: &Cell<u16>,
+) {
     let mut all: Vec<Line<'static>> = Vec::new();
 
     for msg in view.messages.iter() {
@@ -80,11 +89,25 @@ pub fn render(f: &mut Frame, area: Rect, view: &ViewState, scroll: u16, follow_t
     let total_lines = all.len() as u16;
     let visible = inner.height;
 
+    // Auto-adjust scroll when new content arrives while user is scrolled up.
+    // `scroll` is "lines away from bottom", so when the bottom moves further
+    // down (more content), scroll must increase by the same amount to keep
+    // the view anchored at the same content.
+    if !follow_tail {
+        let prev = prev_total_lines.get();
+        if total_lines > prev {
+            let delta = total_lines - prev;
+            scroll.set(scroll.get().saturating_add(delta));
+        }
+    }
+    prev_total_lines.set(total_lines);
+
+    let cur_scroll = scroll.get();
     let max_scroll = total_lines.saturating_sub(visible);
     let final_scroll = if follow_tail {
         max_scroll
     } else {
-        max_scroll.saturating_sub(scroll)
+        max_scroll.saturating_sub(cur_scroll)
     };
 
     let para = Paragraph::new(all)

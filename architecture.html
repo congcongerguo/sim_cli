@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>sim_cli Architecture — Module &amp; Call Graph</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 20px; background: #f8f9fa; color: #222; }
+  h1 { text-align: center; font-size: 20px; margin: 0 0 4px; }
+  .sub { text-align: center; font-size: 13px; color: #666; margin-bottom: 16px; }
+  svg { display: block; margin: 0 auto; max-width: 100%; }
+  .legend { display: flex; gap: 24px; justify-content: center; margin-top: 12px; font-size: 12px; color: #555; }
+  .legend span { display: inline-flex; align-items: center; gap: 4px; }
+  .legend .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 2px; }
+
+  @media (prefers-color-scheme: dark) {
+    body { background: #1a1a2e; color: #ddd; }
+    .sub { color: #999; }
+    .legend { color: #aaa; }
+  }
+</style>
+</head>
+<body>
+
+<h1>sim_cli — Architecture &amp; Interface Call Graph</h1>
+<p class="sub">Nodes = Rust modules/structs/traits &nbsp;|&nbsp; Arrows = calls / imports / data flow</p>
+
+<svg viewBox="0 0 1100 820" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="arrowCall" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto">
+      <polygon points="0,0 7,2.5 0,5" fill="#555"/>
+    </marker>
+    <marker id="arrowData" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto">
+      <polygon points="0,0 7,2.5 0,5" fill="#1a73e8"/>
+    </marker>
+    <marker id="arrowEvent" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto">
+      <polygon points="0,0 7,2.5 0,5" fill="#e67e22"/>
+    </marker>
+
+    <linearGradient id="gradEntry" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#e8f5e9"/><stop stop-color="#c8e6c9"/>
+    </linearGradient>
+    <linearGradient id="gradCore" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#e3f2fd"/><stop stop-color="#bbdefb"/>
+    </linearGradient>
+    <linearGradient id="gradBackend" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#fff3e0"/><stop stop-color="#ffe0b2"/>
+    </linearGradient>
+    <linearGradient id="gradUI" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#f3e5f5"/><stop stop-color="#e1bee7"/>
+    </linearGradient>
+    <linearGradient id="gradTransport" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#e0f2f1"/><stop stop-color="#b2dfdb"/>
+    </linearGradient>
+    <linearGradient id="gradLib" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#fce4ec"/><stop stop-color="#f8bbd0"/>
+    </linearGradient>
+
+    <filter id="shadow" x="-5%" y="-5%" width="115%" height="115%">
+      <feDropShadow dx="1" dy="2" stdDeviation="2" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <!-- ====== GROUP BOXES (layers) ====== -->
+  <rect x="10" y="10" width="260" height="140" rx="8" fill="none" stroke="#4caf50" stroke-dasharray="6,3" stroke-width="1.5" opacity="0.6"/>
+  <text x="22" y="32" font-size="12" fill="#4caf50" font-weight="bold">Entry Points</text>
+
+  <rect x="10" y="170" width="260" height="200" rx="8" fill="none" stroke="#2196f3" stroke-dasharray="6,3" stroke-width="1.5" opacity="0.6"/>
+  <text x="22" y="192" font-size="12" fill="#2196f3" font-weight="bold">Core (high fan-in)</text>
+
+  <rect x="300" y="10" width="250" height="280" rx="8" fill="none" stroke="#ff9800" stroke-dasharray="6,3" stroke-width="1.5" opacity="0.6"/>
+  <text x="312" y="32" font-size="12" fill="#ff9800" font-weight="bold">Backend Sub-systems</text>
+
+  <rect x="580" y="10" width="230" height="280" rx="8" fill="none" stroke="#9c27b0" stroke-dasharray="6,3" stroke-width="1.5" opacity="0.6"/>
+  <text x="592" y="32" font-size="12" fill="#9c27b0" font-weight="bold">UI Rendering</text>
+
+  <rect x="840" y="10" width="240" height="160" rx="8" fill="none" stroke="#009688" stroke-dasharray="6,3" stroke-width="1.5" opacity="0.6"/>
+  <text x="852" y="32" font-size="12" fill="#009688" font-weight="bold">Transport Layer</text>
+
+  <rect x="840" y="190" width="240" height="160" rx="8" fill="none" stroke="#e91e63" stroke-dasharray="6,3" stroke-width="1.5" opacity="0.6"/>
+  <text x="852" y="212" font-size="12" fill="#e91e63" font-weight="bold">Shared Libraries</text>
+
+  <!-- ====== ENTRY POINTS ====== -->
+  <rect x="30" y="50" width="100" height="36" rx="4" fill="url(#gradEntry)" stroke="#4caf50" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="80" y="73" font-size="13" font-weight="bold" text-anchor="middle" fill="#2e7d32">main.rs</text>
+
+  <rect x="145" y="50" width="110" height="36" rx="4" fill="url(#gradEntry)" stroke="#4caf50" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="200" y="73" font-size="12" font-weight="bold" text-anchor="middle" fill="#2e7d32">echo_server</text>
+
+  <rect x="145" y="95" width="110" height="36" rx="4" fill="url(#gradEntry)" stroke="#4caf50" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="200" y="118" font-size="12" font-weight="bold" text-anchor="middle" fill="#2e7d32">zmq_pub_server</text>
+
+  <!-- ====== CORE ====== -->
+  <rect x="30" y="210" width="220" height="50" rx="4" fill="url(#gradCore)" stroke="#2196f3" stroke-width="2" filter="url(#shadow)"/>
+  <text x="140" y="230" font-size="14" font-weight="bold" text-anchor="middle" fill="#1565c0">Frontend</text>
+  <text x="140" y="248" font-size="10" text-anchor="middle" fill="#1565c0">event loop · input · history · scroll</text>
+
+  <rect x="70" y="280" width="140" height="36" rx="4" fill="url(#gradCore)" stroke="#2196f3" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="140" y="303" font-size="13" font-weight="bold" text-anchor="middle" fill="#1565c0">JsonFramer</text>
+
+  <rect x="30" y="330" width="220" height="30" rx="4" fill="url(#gradCore)" stroke="#2196f3" stroke-width="1" filter="url(#shadow)"/>
+  <text x="140" y="350" font-size="12" font-weight="bold" text-anchor="middle" fill="#1565c0">Terminal (ratatui+crossterm)</text>
+
+  <!-- ====== BACKEND ====== -->
+  <rect x="320" y="50" width="100" height="36" rx="4" fill="url(#gradBackend)" stroke="#ff9800" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="370" y="73" font-size="13" font-weight="bold" text-anchor="middle" fill="#e65100">chat.rs</text>
+
+  <rect x="435" y="50" width="100" height="36" rx="4" fill="url(#gradBackend)" stroke="#ff9800" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="485" y="73" font-size="13" font-weight="bold" text-anchor="middle" fill="#e65100">conn.rs</text>
+
+  <rect x="320" y="100" width="100" height="36" rx="4" fill="url(#gradBackend)" stroke="#ff9800" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="370" y="123" font-size="13" font-weight="bold" text-anchor="middle" fill="#e65100">llm.rs</text>
+
+  <rect x="435" y="100" width="100" height="36" rx="4" fill="url(#gradBackend)" stroke="#ff9800" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="485" y="123" font-size="13" font-weight="bold" text-anchor="middle" fill="#e65100">modal.rs</text>
+
+  <!-- Backend orchestrator -->
+  <rect x="320" y="160" width="215" height="42" rx="4" fill="url(#gradBackend)" stroke="#ff9800" stroke-width="2" filter="url(#shadow)"/>
+  <text x="427" y="178" font-size="14" font-weight="bold" text-anchor="middle" fill="#e65100">Backend (mod.rs)</text>
+  <text x="427" y="194" font-size="10" text-anchor="middle" fill="#e65100">dispatch · snapshot · handle_command</text>
+
+  <rect x="320" y="220" width="215" height="30" rx="4" fill="url(#gradBackend)" stroke="#ff9800" stroke-width="1" filter="url(#shadow)"/>
+  <text x="427" y="240" font-size="12" font-weight="bold" text-anchor="middle" fill="#e65100">dispatch.rs</text>
+
+  <!-- ViewState / events -->
+  <rect x="370" y="260" width="110" height="22" rx="3" fill="#fff8e1" stroke="#ff9800" stroke-width="1" stroke-dasharray="3,2"/>
+  <text x="425" y="276" font-size="10" text-anchor="middle" fill="#e65100">ViewState</text>
+
+  <!-- ====== UI ====== -->
+  <rect x="600" y="50" width="190" height="36" rx="4" fill="url(#gradUI)" stroke="#9c27b0" stroke-width="2" filter="url(#shadow)"/>
+  <text x="695" y="73" font-size="13" font-weight="bold" text-anchor="middle" fill="#6a1b9a">ui/mod.rs — render()</text>
+
+  <rect x="600" y="100" width="90" height="36" rx="4" fill="url(#gradUI)" stroke="#9c27b0" stroke-width="1" filter="url(#shadow)"/>
+  <text x="645" y="123" font-size="12" font-weight="bold" text-anchor="middle" fill="#6a1b9a">conversation</text>
+
+  <rect x="700" y="100" width="90" height="36" rx="4" fill="url(#gradUI)" stroke="#9c27b0" stroke-width="1" filter="url(#shadow)"/>
+  <text x="745" y="123" font-size="12" font-weight="bold" text-anchor="middle" fill="#6a1b9a">input</text>
+
+  <rect x="600" y="148" width="90" height="36" rx="4" fill="url(#gradUI)" stroke="#9c27b0" stroke-width="1" filter="url(#shadow)"/>
+  <text x="645" y="171" font-size="12" font-weight="bold" text-anchor="middle" fill="#6a1b9a">markdown</text>
+
+  <rect x="700" y="148" width="90" height="36" rx="4" fill="url(#gradUI)" stroke="#9c27b0" stroke-width="1" filter="url(#shadow)"/>
+  <text x="745" y="171" font-size="12" font-weight="bold" text-anchor="middle" fill="#6a1b9a">modal</text>
+
+  <rect x="600" y="196" width="90" height="36" rx="4" fill="url(#gradUI)" stroke="#9c27b0" stroke-width="1" filter="url(#shadow)"/>
+  <text x="645" y="219" font-size="12" font-weight="bold" text-anchor="middle" fill="#6a1b9a">state_panel</text>
+
+  <rect x="700" y="196" width="90" height="36" rx="4" fill="url(#gradUI)" stroke="#9c27b0" stroke-width="1" filter="url(#shadow)"/>
+  <text x="745" y="219" font-size="12" font-weight="bold" text-anchor="middle" fill="#6a1b9a">statusline</text>
+
+  <rect x="650" y="244" width="90" height="36" rx="4" fill="url(#gradUI)" stroke="#9c27b0" stroke-width="1" filter="url(#shadow)"/>
+  <text x="695" y="267" font-size="12" font-weight="bold" text-anchor="middle" fill="#6a1b9a">tool_card</text>
+
+  <!-- ====== TRANSPORT ====== -->
+  <rect x="860" y="50" width="200" height="40" rx="4" fill="url(#gradTransport)" stroke="#009688" stroke-width="2" filter="url(#shadow)"/>
+  <text x="960" y="66" font-size="12" font-weight="bold" text-anchor="middle" fill="#004d40">Transport (trait)</text>
+  <text x="960" y="82" font-size="10" text-anchor="middle" fill="#004d40">connect / disconnect / send / recv</text>
+
+  <rect x="860" y="105" width="95" height="36" rx="4" fill="url(#gradTransport)" stroke="#009688" stroke-width="1" filter="url(#shadow)"/>
+  <text x="907" y="128" font-size="13" font-weight="bold" text-anchor="middle" fill="#004d40">tcp.rs</text>
+
+  <rect x="965" y="105" width="95" height="36" rx="4" fill="url(#gradTransport)" stroke="#009688" stroke-width="1" filter="url(#shadow)"/>
+  <text x="1012" y="128" font-size="13" font-weight="bold" text-anchor="middle" fill="#004d40">zmq.rs</text>
+
+  <!-- ====== COMMANDS & HELP ====== -->
+  <rect x="860" y="230" width="100" height="36" rx="4" fill="url(#gradLib)" stroke="#e91e63" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="910" y="253" font-size="13" font-weight="bold" text-anchor="middle" fill="#880e4f">commands.rs</text>
+
+  <rect x="975" y="230" width="90" height="36" rx="4" fill="url(#gradLib)" stroke="#e91e63" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="1020" y="253" font-size="13" font-weight="bold" text-anchor="middle" fill="#880e4f">message.rs</text>
+
+  <rect x="860" y="280" width="100" height="36" rx="4" fill="url(#gradLib)" stroke="#e91e63" stroke-width="1" filter="url(#shadow)"/>
+  <text x="910" y="303" font-size="13" font-weight="bold" text-anchor="middle" fill="#880e4f">help.rs</text>
+
+  <rect x="975" y="280" width="90" height="36" rx="4" fill="url(#gradLib)" stroke="#e91e63" stroke-width="1" filter="url(#shadow)"/>
+  <text x="1020" y="303" font-size="13" font-weight="bold" text-anchor="middle" fill="#880e4f">event.rs</text>
+
+  <!-- ====== INTERFACES / TRAITS ====== -->
+  <rect x="580" y="310" width="510" height="110" rx="6" fill="none" stroke="#888" stroke-width="0.5" stroke-dasharray="2,4" opacity="0.5"/>
+  <text x="595" y="328" font-size="10" fill="#888" font-weight="bold">Key Interfaces</text>
+
+  <rect x="600" y="338" width="230" height="34" rx="3" fill="#f5f5f5" stroke="#999" stroke-width="0.5"/>
+  <text x="610" y="352" font-size="10" font-family="monospace" fill="#555">trait Transport {</text>
+  <text x="618" y="366" font-size="10" font-family="monospace" fill="#555">  connect / disconnect / send / recv</text>
+
+  <rect x="845" y="338" width="230" height="34" rx="3" fill="#f5f5f5" stroke="#999" stroke-width="0.5"/>
+  <text x="855" y="352" font-size="10" font-family="monospace" fill="#555">enum Command { Run(Action) / ShowSystem / Permission }</text>
+  <text x="855" y="366" font-size="10" font-family="monospace" fill="#555">enum Action { Help, Clear, Exit, Model, Plan, Demo, Connect, ... }</text>
+
+  <rect x="600" y="380" width="230" height="34" rx="3" fill="#f5f5f5" stroke="#999" stroke-width="0.5"/>
+  <text x="610" y="394" font-size="10" font-family="monospace" fill="#555">struct ViewState { messages, mode, model,</text>
+  <text x="618" y="408" font-size="10" font-family="monospace" fill="#555">  streaming, conn, state, modal, ... }</text>
+
+  <rect x="845" y="380" width="230" height="34" rx="3" fill="#f5f5f5" stroke="#999" stroke-width="0.5"/>
+  <text x="855" y="394" font-size="10" font-family="monospace" fill="#555">struct CommandSpec { name, desc, subs, build }</text>
+  <text x="855" y="408" font-size="10" font-family="monospace" fill="#555">fn completion_ctx(input) → CompletionCtx</text>
+
+  <!-- ====== ARROWS (call relationships) ====== -->
+
+  <!-- main → Frontend -->
+  <line x1="130" y1="86" x2="130" y2="208" stroke="#555" stroke-width="1.5" marker-end="url(#arrowCall)"/>
+
+  <!-- Frontend → Backend (Command channel) -->
+  <line x1="250" y1="235" x2="318" y2="180" stroke="#1a73e8" stroke-width="2" marker-end="url(#arrowData)" stroke-dasharray="6,2"/>
+  <text x="270" y="200" font-size="9" fill="#1a73e8">mpsc::Sender&lt;Command&gt;</text>
+
+  <!-- Frontend ← Backend (ViewState watch) -->
+  <line x1="318" y1="235" x2="250" y2="250" stroke="#1a73e8" stroke-width="2" marker-end="url(#arrowData)" stroke-dasharray="6,2"/>
+  <text x="270" y="265" font-size="9" fill="#1a73e8">watch::Receiver&lt;ViewState&gt;</text>
+
+  <!-- Frontend → UI render -->
+  <line x1="250" y1="250" x2="598" y2="60" stroke="#555" stroke-width="1.5" marker-end="url(#arrowCall)"/>
+
+  <!-- Frontend → commands -->
+  <line x1="250" y1="260" x2="858" y2="248" stroke="#555" stroke-width="1" marker-end="url(#arrowCall)"/>
+
+  <!-- Backend → subsystems -->
+  <line x1="370" y1="160" x2="370" y2="138" stroke="#e67e22" stroke-width="1" marker-end="url(#arrowEvent)"/>
+  <line x1="427" y1="160" x2="485" y2="138" stroke="#e67e22" stroke-width="1" marker-end="url(#arrowEvent)"/>
+  <line x1="427" y1="160" x2="427" y2="218" stroke="#e67e22" stroke-width="1" marker-end="url(#arrowEvent)"/>
+
+  <!-- Backend → transport -->
+  <line x1="535" y1="175" x2="858" y2="70" stroke="#009688" stroke-width="1.5" marker-end="url(#arrowCall)"/>
+
+  <!-- Transport → JsonFramer -->
+  <line x1="907" y1="105" x2="210" y2="280" stroke="#555" stroke-width="1" marker-end="url(#arrowCall)"/>
+
+  <!-- UI → Frontend (reads) -->
+  <line x1="695" y1="50" x2="140" y2="210" stroke="#555" stroke-width="1" marker-end="url(#arrowCall)" stroke-dasharray="4,2"/>
+  <text x="450" y="135" font-size="8" fill="#888">reads scroll / input / view</text>
+
+  <!-- Flow legend box -->
+  <rect x="20" y="440" width="520" height="135" rx="6" fill="#fff" stroke="#ddd" stroke-width="1"/>
+  <text x="35" y="462" font-size="13" font-weight="bold" fill="#333">Request Flow (example: user types "/model claude" Enter)</text>
+
+  <text x="35" y="484" font-size="11" fill="#555" font-family="monospace">1. KeyEvent::Enter</text>
+  <text x="45" y="500" font-size="11" fill="#555" font-family="monospace">   → Frontend.on_key() → submit() → parse_action() → Action::Model(Claude)</text>
+  <text x="35" y="518" font-size="11" fill="#555" font-family="monospace">2. Frontend.send(Command::Run(action))</text>
+  <text x="45" y="534" font-size="11" fill="#555" font-family="monospace">   → mpsc channel → Backend.handle_command()</text>
+  <text x="35" y="552" font-size="11" fill="#555" font-family="monospace">3. Backend → dispatch.rs → chat.rs (set_model, push_system)</text>
+  <text x="45" y="568" font-size="11" fill="#555" font-family="monospace">   → snapshot() → watch channel → ViewState → Frontend.view_rx.changed() → re-render</text>
+
+  <!-- Data channels box -->
+  <rect x="560" y="440" width="520" height="135" rx="6" fill="#fff" stroke="#ddd" stroke-width="1"/>
+  <text x="575" y="462" font-size="13" font-weight="bold" fill="#333">Data Channels (tokio channels between threads)</text>
+
+  <text x="575" y="486" font-size="11" fill="#555" font-family="monospace">Thread 1 (main):   Frontend::run() event loop</text>
+  <text x="585" y="504" font-size="11" fill="#555" font-family="monospace">  • Terminal draw at 60fps (ratatui + crossterm)</text>
+  <text x="585" y="520" font-size="11" fill="#555" font-family="monospace">  • Key events → on_key() → parse / submit / scroll / history</text>
+
+  <text x="575" y="542" font-size="11" fill="#555" font-family="monospace">Thread 2 (worker): Backend event loop (tokio::spawn)</text>
+  <text x="585" y="560" font-size="11" fill="#555" font-family="monospace">  • mpsc::Receiver&lt;Command&gt; → dispatch to subsystems</text>
+  <text x="585" y="575" font-size="11" fill="#555" font-family="monospace">  • watch::Sender&lt;ViewState&gt; → push snapshots to Frontend</text>
+
+  <!-- Layer annotation -->
+  <rect x="20" y="595" width="1060" height="200" rx="6" fill="#fafafa" stroke="#ddd" stroke-width="1"/>
+  <text x="35" y="618" font-size="13" font-weight="bold" fill="#333">Module Dependency Graph (imports)</text>
+
+  <!-- ASCII-like dependency tree -->
+  <text x="35" y="642" font-size="11" fill="#555" font-family="monospace">main.rs ───► frontend ──┬──► commands ──► transport::Protocol</text>
+  <text x="35" y="660" font-size="11" fill="#555" font-family="monospace">             │          ├──► backend ──┬──► chat ──► message::Message</text>
+  <text x="35" y="678" font-size="11" fill="#555" font-family="monospace">             │          │              ├──► conn ──► transport::{tcp, zmq} ──► json_framer</text>
+  <text x="35" y="696" font-size="11" fill="#555" font-family="monospace">             │          │              ├──► llm ──► chat, modal</text>
+  <text x="35" y="714" font-size="11" fill="#555" font-family="monospace">             │          │              └──► modal ──► chat, message</text>
+  <text x="35" y="732" font-size="11" fill="#555" font-family="monospace">             │          └──► ui ──┬──► conversation ──► markdown, tool_card, message</text>
+  <text x="35" y="750" font-size="11" fill="#555" font-family="monospace">             │                  ├──► input ──► frontend (reads input, menu)</text>
+  <text x="35" y="768" font-size="11" fill="#555" font-family="monospace">             │                  ├──► modal ──► message</text>
+  <text x="35" y="786" font-size="11" fill="#555" font-family="monospace">             │                  ├──► state_panel ──► json_framer</text>
+  <text x="35" y="804" font-size="11" fill="#555" font-family="monospace">             │                  └──► statusline</text>
+
+</svg>
+
+<div class="legend">
+  <span><span class="swatch" style="background:#555"></span> Call</span>
+  <span><span class="swatch" style="background:#1a73e8"></span> Channel (mpsc / watch)</span>
+  <span><span class="swatch" style="background:#e67e22"></span> Internal dispatch</span>
+  <span><span class="swatch" style="background:#4caf50"></span> Entry</span>
+  <span><span class="swatch" style="background:#2196f3"></span> Core</span>
+  <span><span class="swatch" style="background:#ff9800"></span> Backend</span>
+  <span><span class="swatch" style="background:#9c27b0"></span> UI</span>
+  <span><span class="swatch" style="background:#009688"></span> Transport</span>
+  <span><span class="swatch" style="background:#e91e63"></span> Shared</span>
+</div>
+
+</body>
+</html>

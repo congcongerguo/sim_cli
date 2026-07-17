@@ -1,3 +1,5 @@
+use std::cell::Cell;
+
 use anyhow::Result;
 use crossterm::event::{
     Event as CtEvent, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
@@ -34,7 +36,8 @@ pub enum InputState {
 
 pub struct Frontend {
     pub input: TextArea<'static>,
-    pub scroll: u16,
+    /// Lines scrolled away from the bottom (adjusted during render when content grows).
+    pub scroll: Cell<u16>,
     pub follow_tail: bool,
     pub menu_idx: usize,
     pub tab_cycle: Option<TabCycle>,
@@ -44,6 +47,13 @@ pub struct Frontend {
     pub panel_visible: bool,
     cmd_tx: mpsc::Sender<Command>,
     view_rx: watch::Receiver<ViewState>,
+    history: Vec<String>,
+    history_cursor: Option<usize>,
+    /// Number of visible lines in the conversation area (set during render).
+    pub viewport_height: Cell<u16>,
+    /// Previous total conversation lines — used to auto-adjust scroll when
+    /// new content arrives while the user is scrolled up.
+    pub prev_total_lines: Cell<u16>,
 }
 
 impl Frontend {
@@ -54,7 +64,7 @@ impl Frontend {
         let view = view_rx.borrow().clone();
         Self {
             input,
-            scroll: 0,
+            scroll: Cell::new(0),
             follow_tail: true,
             menu_idx: 0,
             tab_cycle: None,
@@ -64,6 +74,10 @@ impl Frontend {
             panel_visible: true,
             cmd_tx,
             view_rx,
+            history: Vec::new(),
+            history_cursor: None,
+            viewport_height: Cell::new(20),
+            prev_total_lines: Cell::new(0),
         }
     }
 
@@ -169,15 +183,27 @@ impl Frontend {
                 return;
             }
             (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {
-                self.scroll = self.scroll.saturating_add(5);
+                let step = self.viewport_height.get().max(1);
+                self.scroll.set(self.scroll.get().saturating_add(step));
                 self.follow_tail = false;
                 return;
             }
             (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
-                self.scroll = self.scroll.saturating_sub(5);
-                if self.scroll == 0 {
+                let step = self.viewport_height.get().max(1);
+                self.scroll.set(self.scroll.get().saturating_sub(step));
+                if self.scroll.get() == 0 {
                     self.follow_tail = true;
                 }
+                return;
+            }
+            (KeyCode::Home, _) => {
+                self.scroll.set(u16::MAX);
+                self.follow_tail = false;
+                return;
+            }
+            (KeyCode::End, _) => {
+                self.scroll.set(0);
+                self.follow_tail = true;
                 return;
             }
             (KeyCode::Char('g'), KeyModifiers::CONTROL) => {
@@ -237,16 +263,59 @@ impl Frontend {
 
         let menu = self.menu_items();
         if !menu.is_empty() {
-            match key.code {
+            let menu_consumed = match key.code {
                 KeyCode::Up => {
                     if self.menu_idx > 0 {
                         self.menu_idx -= 1;
+                        true
+                    } else {
+                        false
                     }
-                    return;
                 }
                 KeyCode::Down => {
                     if self.menu_idx + 1 < menu.len() {
                         self.menu_idx += 1;
+                        true
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            };
+            if menu_consumed {
+                return;
+            }
+        }
+
+        // History navigation (Up/Down not consumed by menu, or no menu)
+        if matches!(key.code, KeyCode::Up | KeyCode::Down) {
+            match key.code {
+                KeyCode::Up => {
+                    if !self.history.is_empty() {
+                        let pos = match self.history_cursor {
+                            None => self.history.len().saturating_sub(1),
+                            Some(0) => 0,
+                            Some(n) => n.saturating_sub(1),
+                        };
+                        let text = self.history[pos].clone();
+                        self.history_cursor = Some(pos);
+                        self.tab_cycle = None;
+                        self.replace_input(&text);
+                    }
+                    return;
+                }
+                KeyCode::Down => {
+                    if let Some(pos) = self.history_cursor {
+                        if pos + 1 < self.history.len() {
+                            let text = self.history[pos + 1].clone();
+                            self.history_cursor = Some(pos + 1);
+                            self.tab_cycle = None;
+                            self.replace_input(&text);
+                        } else {
+                            self.history_cursor = None;
+                            self.tab_cycle = None;
+                            self.replace_input("");
+                        }
                     }
                     return;
                 }
@@ -272,6 +341,7 @@ impl Frontend {
         }
 
         self.tab_cycle = None;
+        self.history_cursor = None;
         let input: Input = key.into();
         self.input.input(input);
         let menu = self.menu_items();
@@ -380,6 +450,7 @@ impl Frontend {
             let text = format!("{head}{lcp}");
             self.replace_input(&text);
             self.menu_idx = 0;
+            self.tab_cycle = None;
             return;
         }
         let pick = names[0].to_string();
@@ -397,7 +468,16 @@ impl Frontend {
         self.tab_cycle = None;
         self.menu_idx = 0;
         self.follow_tail = true;
-        self.scroll = 0;
+        self.scroll.set(0);
+        self.history_cursor = None;
+
+        // Push to history (deduplicate consecutive identical entries)
+        if self.history.last().map_or(true, |last| last != &text) {
+            self.history.push(text.clone());
+            if self.history.len() > 1000 {
+                self.history.remove(0);
+            }
+        }
 
         match commands::parse_action(&text) {
             Ok(action) => {
@@ -416,7 +496,7 @@ impl Frontend {
         self.tab_cycle = None;
         self.menu_idx = 0;
         self.follow_tail = true;
-        self.scroll = 0;
+        self.scroll.set(0);
         self.send(Command::Run(action));
     }
 }
