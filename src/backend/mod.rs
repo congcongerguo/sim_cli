@@ -26,7 +26,7 @@ use crate::message::Message;
 pub use chat::Mode;
 pub use conn::ConnState;
 pub use modal::{ModalChoice, ModalRequest};
-pub use task::{TaskInfo, TaskManager};
+pub use task::{TaskDef, TaskInfo, TaskManager, TASK_DEFS};
 
 #[derive(Debug)]
 pub enum Command {
@@ -56,9 +56,18 @@ pub struct ViewState {
 
 impl ViewState {
     pub fn initial(model: String) -> Self {
+        let default_def = &TASK_DEFS[0];
+        let tasks: Vec<TaskInfo> = TASK_DEFS
+            .iter()
+            .map(|d| TaskInfo {
+                name: d.name.into(),
+                demo_running: false,
+                conn: ConnState::Disconnected,
+            })
+            .collect();
         Self {
             messages: Arc::new(vec![
-                Message::System("[main] general chat  —  model / plan / demo".into()),
+                Message::System(format!("[{}] {}", default_def.name, default_def.hint)),
                 Message::System("type 'help' for commands, ←/→ to switch tabs".into()),
             ]),
             model,
@@ -69,12 +78,8 @@ impl ViewState {
             conn: ConnState::Disconnected,
             latest_recv: None,
             latest_recv_at: None,
-            tasks: Arc::new(vec![
-                TaskInfo { name: "main".into(), demo_running: false, conn: ConnState::Disconnected },
-                TaskInfo { name: "conn".into(), demo_running: false, conn: ConnState::Disconnected },
-                TaskInfo { name: "demo".into(), demo_running: false, conn: ConnState::Disconnected },
-            ]),
-            active_task: "main".into(),
+            tasks: Arc::new(tasks),
+            active_task: TASK_DEFS[0].name.into(),
             active_task_index: 0,
         }
     }
@@ -244,13 +249,14 @@ mod tests {
     }
 
     #[test]
-    fn starts_with_three_fixed_tasks() {
+    fn starts_with_tasks_from_defs() {
         let b = Backend::new("mock-claude".into());
         let view = b.snapshot();
-        assert_eq!(view.tasks.len(), 3);
-        assert_eq!(view.active_task, "main");
+        assert_eq!(view.tasks.len(), TASK_DEFS.len());
+        assert_eq!(view.active_task, TASK_DEFS[0].name);
         let names: Vec<&str> = view.tasks.iter().map(|t| t.name.as_str()).collect();
-        assert_eq!(names, vec!["main", "conn", "demo"]);
+        let expected: Vec<&str> = TASK_DEFS.iter().map(|d| d.name).collect();
+        assert_eq!(names, expected);
     }
 
     #[test]

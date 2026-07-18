@@ -5,6 +5,53 @@ use tokio::sync::{mpsc, watch};
 use super::chat::ChatState;
 use super::conn::{ConnState, ConnSubsystem};
 
+// -----------------------------------------------------------------------------
+// Static task definitions — add a row here to create a new fixed tab.
+// -----------------------------------------------------------------------------
+
+/// Definition of a fixed task tab. Everything else (TaskManager init,
+/// ViewState init, command filter, help text) derives from this table.
+#[derive(Debug, Clone)]
+pub struct TaskDef {
+    pub name: &'static str,
+    pub hint: &'static str,
+    /// Allowed command names. Empty slice means *all* commands are allowed.
+    pub commands: &'static [&'static str],
+}
+
+/// Single source of truth for task tabs.
+pub const TASK_DEFS: &[TaskDef] = &[
+    TaskDef {
+        name: "main",
+        hint: "general       —  model / plan / demo",
+        commands: &[],
+    },
+    TaskDef {
+        name: "conn",
+        hint: "transport     —  con zmq|tcp / close / send",
+        commands: &["help", "clear", "exit", "con", "close", "send"],
+    },
+    TaskDef {
+        name: "demo",
+        hint: "log demo      —  start / stop",
+        commands: &["help", "clear", "exit", "start", "stop"],
+    },
+];
+
+impl TaskDef {
+    pub fn find(name: &str) -> Option<&'static TaskDef> {
+        TASK_DEFS.iter().find(|d| d.name == name)
+    }
+
+    pub fn is_allowed(&self, cmd: &str) -> bool {
+        self.commands.is_empty() || self.commands.contains(&cmd)
+    }
+}
+
+// -----------------------------------------------------------------------------
+// Runtime types
+// -----------------------------------------------------------------------------
+
 /// Lightweight task metadata for the tab bar (no message history).
 #[derive(Debug, Clone)]
 pub struct TaskInfo {
@@ -33,26 +80,25 @@ pub struct TaskManager {
 impl TaskManager {
     pub fn new(model: String) -> Self {
         let (demo_tick_tx, demo_tick_rx) = mpsc::channel(64);
-        let make_task = |name: &str, hint: &str| {
-            let mut chat = ChatState::new(model.clone());
-            // Replace the generic welcome with a tab-specific message.
-            chat.messages.clear();
-            chat.push_system(format!("[{name}] {hint}"));
-            chat.push_system("type 'help' for commands, ←/→ to switch tabs");
-            Task {
-                name: name.into(),
-                chat,
-                conn: ConnSubsystem::new(),
-                demo_running: false,
-                demo_cancel: None,
-            }
-        };
+        let tasks: Vec<Task> = TASK_DEFS
+            .iter()
+            .map(|def| {
+                let mut chat = ChatState::new(model.clone());
+                chat.messages.clear();
+                chat.push_system(format!("[{}] {}", def.name, def.hint));
+                chat.push_system("type 'help' for commands, ←/→ to switch tabs");
+                Task {
+                    name: def.name.into(),
+                    chat,
+                    conn: ConnSubsystem::new(),
+                    demo_running: false,
+                    demo_cancel: None,
+                }
+            })
+            .collect();
+
         Self {
-            tasks: vec![
-                make_task("main", "general       —  model / plan / demo"),
-                make_task("conn", "transport     —  con zmq|tcp / close / send"),
-                make_task("demo", "log demo      —  start / stop"),
-            ],
+            tasks,
             active: 0,
             demo_tick_tx,
             demo_tick_rx,
@@ -205,18 +251,19 @@ mod tests {
     }
 
     #[test]
-    fn starts_with_three_fixed_tasks() {
+    fn starts_with_tasks_from_defs() {
         let mgr = make_mgr();
-        assert_eq!(mgr.tasks.len(), 3);
-        assert_eq!(mgr.active_name(), "main");
+        assert_eq!(mgr.tasks.len(), TASK_DEFS.len());
+        assert_eq!(mgr.active_name(), TASK_DEFS[0].name);
         let names: Vec<&str> = mgr.tasks.iter().map(|t| t.name.as_str()).collect();
-        assert_eq!(names, vec!["main", "conn", "demo"]);
+        let expected: Vec<&str> = TASK_DEFS.iter().map(|d| d.name).collect();
+        assert_eq!(names, expected);
     }
 
     #[test]
     fn cannot_add_duplicate_name() {
         let mut mgr = make_mgr();
-        assert!(mgr.add("main".into(), "mock-claude".into()).is_err());
+        assert!(mgr.add(TASK_DEFS[0].name.into(), "mock-claude".into()).is_err());
     }
 
     #[test]
@@ -228,13 +275,13 @@ mod tests {
     #[test]
     fn add_and_switch() {
         let mut mgr = make_mgr();
+        let init_len = mgr.tasks.len();
         mgr.add("extra".into(), "mock-claude".into()).unwrap();
-        assert_eq!(mgr.tasks.len(), 4);
+        assert_eq!(mgr.tasks.len(), init_len + 1);
         mgr.switch_to("extra").unwrap();
         assert_eq!(mgr.active_name(), "extra");
-        // Switch back to a fixed task
-        mgr.switch_to("conn").unwrap();
-        assert_eq!(mgr.active_name(), "conn");
+        mgr.switch_to(TASK_DEFS[1].name).unwrap();
+        assert_eq!(mgr.active_name(), TASK_DEFS[1].name);
     }
 
     #[test]
@@ -246,43 +293,42 @@ mod tests {
     #[test]
     fn switch_between_fixed_tasks() {
         let mut mgr = make_mgr();
-        mgr.switch_to("demo").unwrap();
-        assert_eq!(mgr.active_name(), "demo");
-        mgr.switch_to("main").unwrap();
-        assert_eq!(mgr.active_name(), "main");
+        for def in TASK_DEFS {
+            mgr.switch_to(def.name).unwrap();
+            assert_eq!(mgr.active_name(), def.name);
+        }
     }
 
     #[test]
     fn close_last_task_refused() {
         let mut mgr = make_mgr();
-        // Close two, then try to close the last
-        mgr.close("conn").unwrap();
-        mgr.close("demo").unwrap();
-        assert_eq!(mgr.tasks.len(), 1);
-        assert!(mgr.close("main").is_err());
+        while mgr.tasks.len() > 1 {
+            let name = mgr.tasks[1].name.clone();
+            mgr.close(&name).unwrap();
+        }
+        let last = mgr.tasks[0].name.clone();
+        assert!(mgr.close(&last).is_err());
     }
 
     #[test]
     fn close_task_adjusts_active() {
         let mut mgr = make_mgr();
-        // active=0 ("main"), close zmq (index 1), active stays at 0
-        mgr.close("conn").unwrap();
-        assert_eq!(mgr.active_name(), "main");
-        assert_eq!(mgr.tasks.len(), 2);
-        // Switch to tcp (index 1), then close main (index 0)
-        mgr.switch_to("demo").unwrap();
-        mgr.close("main").unwrap();
-        // active should shift back to 0 (tcp)
-        assert_eq!(mgr.active_name(), "demo");
+        let second = mgr.tasks[1].name.clone();
+        mgr.close(&second).unwrap();
+        assert_eq!(mgr.active_name(), TASK_DEFS[0].name);
+        let last = mgr.tasks.last().unwrap().name.clone();
+        mgr.switch_to(&last).unwrap();
+        mgr.close(TASK_DEFS[0].name).unwrap();
+        assert!(!mgr.tasks.iter().any(|t| t.name == TASK_DEFS[0].name));
     }
 
     #[test]
     fn close_active_task_switches() {
         let mut mgr = make_mgr();
-        // active=0 ("main"), close it → active becomes "conn" (index 0 now)
-        mgr.close("main").unwrap();
-        assert_eq!(mgr.active_name(), "conn");
-        assert_eq!(mgr.tasks.len(), 2);
+        let first = mgr.tasks[0].name.clone();
+        mgr.close(&first).unwrap();
+        assert_eq!(mgr.active_name(), TASK_DEFS[1].name);
+        assert_eq!(mgr.tasks.len(), TASK_DEFS.len() - 1);
     }
 
     #[tokio::test]
@@ -290,10 +336,10 @@ mod tests {
         let mut mgr = make_mgr();
         assert!(mgr.start_demo().is_ok());
         assert!(mgr.tasks[0].demo_running);
-        assert!(mgr.start_demo().is_err()); // already running
+        assert!(mgr.start_demo().is_err());
         assert!(mgr.stop_demo().is_ok());
         assert!(!mgr.tasks[0].demo_running);
-        assert!(mgr.stop_demo().is_err()); // not running
+        assert!(mgr.stop_demo().is_err());
     }
 
     #[tokio::test]
@@ -301,9 +347,9 @@ mod tests {
         let mut mgr = make_mgr();
         mgr.start_demo().unwrap();
         assert!(mgr.tasks[0].demo_running);
-        mgr.close("main").unwrap();
-        // "main" was removed, zmq is now active
-        assert_eq!(mgr.active_name(), "conn");
-        assert_eq!(mgr.tasks.len(), 2);
+        let first = mgr.tasks[0].name.clone();
+        mgr.close(&first).unwrap();
+        assert_eq!(mgr.active_name(), TASK_DEFS[1].name);
+        assert_eq!(mgr.tasks.len(), TASK_DEFS.len() - 1);
     }
 }

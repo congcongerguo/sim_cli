@@ -265,23 +265,22 @@ fn sub_names(def: &CommandSpec) -> Vec<&'static str> {
 }
 
 // -----------------------------------------------------------------------------
-// Task-scoped command filter
+// Task-scoped command filter (delegates to TaskDef)
 // -----------------------------------------------------------------------------
 
 /// Returns the set of allowed command names for a task. `None` = all allowed.
 pub fn task_filter(task_name: &str) -> Option<&'static [&'static str]> {
-    match task_name {
-        "conn" => Some(&["help", "clear", "exit", "con", "close", "send"]),
-        "demo" => Some(&["help", "clear", "exit", "start", "stop"]),
-        _ => None, // "main" and unknown: all commands
+    let def = crate::backend::TaskDef::find(task_name)?;
+    if def.commands.is_empty() {
+        None
+    } else {
+        Some(def.commands)
     }
 }
 
 pub fn is_command_allowed(cmd_name: &str, task_name: &str) -> bool {
-    match task_filter(task_name) {
-        Some(allowed) => allowed.contains(&cmd_name),
-        None => true,
-    }
+    crate::backend::TaskDef::find(task_name)
+        .map_or(true, |d| d.is_allowed(cmd_name))
 }
 
 // -----------------------------------------------------------------------------

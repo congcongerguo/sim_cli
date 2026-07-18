@@ -16,12 +16,6 @@ Hotkeys:
 const PREFIX_NOTE: &str =
     "Prefixes work at both levels: 'p o' runs 'plan on', 'd c' is ambiguous.";
 
-const TASK_NOTE: &str = "\
-3 fixed task tabs: main, conn, demo. Use ←/→ to switch.
-  main — all commands (model, plan, demo, con, start, stop)
-  conn — transport only (con, close, send)
-  demo — logger only (start, stop)";
-
 pub fn full_help(task_name: &str) -> String {
     let filter = crate::commands::task_filter(task_name);
     let mut s = format!("Available commands ({task_name}):\n");
@@ -36,8 +30,12 @@ pub fn full_help(task_name: &str) -> String {
     s.push('\n');
     s.push_str(PREFIX_NOTE);
     s.push_str("\n\n");
-    s.push_str(TASK_NOTE);
-    s.push_str("\n\n");
+    // Generate task tab descriptions from TASK_DEFS.
+    s.push_str("Task tabs (←/→ to switch):\n");
+    for d in crate::backend::TASK_DEFS {
+        let _ = writeln!(s, "  {:<8} — {}", d.name, d.hint);
+    }
+    s.push_str("\n");
     s.push_str(HOTKEYS);
     s
 }
