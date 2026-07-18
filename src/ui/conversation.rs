@@ -30,20 +30,17 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState, visible: u
                         Style::default().fg(Color::Cyan).add_modifier(Modifier::SLOW_BLINK),
                     )));
                 }
-                all.push(Line::from(""));
             }
             Message::Tool(t) => {
                 for l in tool_card_lines(t) {
                     all.push(l);
                 }
-                all.push(Line::from(""));
             }
             Message::System { text, level } => {
                 let color = log_level_color(*level);
                 for line in text.lines() {
                     all.push(Line::from(Span::styled(line.to_string(), Style::default().fg(color))));
                 }
-                all.push(Line::from(""));
             }
         }
     }

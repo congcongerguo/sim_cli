@@ -12,12 +12,10 @@ pub fn msg_line_count(msg: &Message) -> u64 {
     match msg {
         Message::Assistant { text, streaming } => {
             let n = text.lines().count() as u64;
-            if *streaming { n + 1 } else { n }  // +1 for cursor
+            if *streaming { n + 1 } else { n }
         }
-        Message::Tool(_t) => 4, // title + status + args + output
-        Message::System { text, .. } => {
-            text.lines().count() as u64 + 1  // +1 for blank separator
-        }
+        Message::Tool(_t) => 3,
+        Message::System { text, .. } => text.lines().count() as u64,
     }
 }
 
@@ -179,7 +177,7 @@ mod tests {
         buf.clear();
         assert_eq!(buf.len(), 0);
         assert_eq!(buf.evicted_entries(), 1, "clear must not reset eviction counter");
-        assert_eq!(buf.evicted_lines(), 2, "clear must not reset eviction line counter");
+        assert_eq!(buf.evicted_lines(), 1, "clear must not reset eviction line counter");
     }
 
     #[test]
@@ -233,10 +231,9 @@ mod tests {
     #[test]
     fn total_lines_increments_and_decrements() {
         let mut buf = LogBuffer::new(10);
-        // Single-line system messages: each = 2 lines (text + blank separator)
-        buf.push(msg("a")); // 2 lines
-        buf.push(msg("b")); // 2 lines
-        assert_eq!(buf.total_lines(), 4);
+        buf.push(msg("a"));
+        buf.push(msg("b"));
+        assert_eq!(buf.total_lines(), 2);
         buf.clear();
         assert_eq!(buf.total_lines(), 0);
     }
@@ -244,11 +241,11 @@ mod tests {
     #[test]
     fn total_lines_drops_on_eviction() {
         let mut buf = LogBuffer::new(2);
-        buf.push(msg("a")); // +2
-        buf.push(msg("b")); // +2 -> total 4
-        assert_eq!(buf.total_lines(), 4);
-        buf.push(msg("c")); // +2, evicts "a" (-2) -> total 4
-        assert_eq!(buf.total_lines(), 4);
+        buf.push(msg("a"));
+        buf.push(msg("b"));
+        assert_eq!(buf.total_lines(), 2);
+        buf.push(msg("c")); // evicts "a", total still 2
+        assert_eq!(buf.total_lines(), 2);
         assert_eq!(buf.evicted_entries(), 1);
     }
 
@@ -276,8 +273,7 @@ mod tests {
         }
         assert_eq!(buf.len(), 200, "buffer must not exceed max_entries");
         assert_eq!(buf.evicted_entries(), 800, "should have evicted 800 messages");
-        // Each System message = 2 lines (text + blank separator)
-        assert_eq!(buf.total_lines(), 400, "200 messages × 2 lines");
+        assert_eq!(buf.total_lines(), 200, "200 messages × 1 line each");
     }
 
     #[test]
@@ -295,6 +291,16 @@ mod tests {
         assert!(buf.evicted_lines() > 0, "should have evicted some lines");
         // scroll=0 < evicted_lines should trigger auto-resume.
         assert!(0u64 < buf.evicted_lines(), "evicted lines should be > scroll position 0");
+    }
+
+    #[test]
+    fn evicted_lines_is_line_count_not_entry_count() {
+        let mut buf = LogBuffer::new(1);
+        buf.push(msg("one line")); // 2 lines (text + blank separator)
+        assert_eq!(buf.evicted_lines(), 0);
+        buf.push(msg("triggers eviction")); // evicts first msg
+        assert_eq!(buf.evicted_lines(), 1, "evicted_lines must count lines, not entries");
+        assert_eq!(buf.evicted_entries(), 1, "evicted_entries must count entries");
     }
 
     #[test]
