@@ -114,18 +114,12 @@ impl Frontend {
     }
 
     fn apply_output(&self, out: &crate::ui::render_state::RenderOutput) {
-        // If content fits on one screen, always follow (scroll not needed).
-        if out.total_lines <= out.viewport_height {
-            self.follow_tail.set(true);
-            self.scroll.set(0);
-            self.unseen_lines.set(0);
-            self.total_at_follow.set(out.total_lines);
-        } else if self.follow_tail.get() {
-            // In follow mode: no unseen lines, track current total.
+        if self.follow_tail.get() {
+            // Following: no unseen lines, track current total.
             self.unseen_lines.set(0);
             self.total_at_follow.set(out.total_lines);
         } else {
-            // Detached mode: count how many lines have been added since.
+            // Detached: count lines added since we left follow mode.
             let unseen = out.total_lines.saturating_sub(self.total_at_follow.get());
             self.unseen_lines.set(unseen);
         }
