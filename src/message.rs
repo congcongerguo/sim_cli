@@ -14,6 +14,16 @@ pub struct ToolCall {
     pub output: String,
 }
 
+/// Log level for system messages. Controls display colour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LogLevel {
+    Error,
+    Warn,
+    Notice,
+    Info,
+    Debug,
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     Assistant {
@@ -21,5 +31,8 @@ pub enum Message {
         streaming: bool,
     },
     Tool(ToolCall),
-    System(String),
+    System {
+        text: String,
+        level: LogLevel,
+    },
 }

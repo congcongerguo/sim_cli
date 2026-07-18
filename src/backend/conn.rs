@@ -1,6 +1,7 @@
 use chrono::{DateTime, Local};
 use tokio::sync::mpsc;
 
+use crate::message::LogLevel;
 use crate::transport::{self, Protocol, TransportEvent, TransportHandle};
 
 const CHANNEL_BUFFER: usize = 64;
@@ -151,31 +152,33 @@ impl ConnSubsystem {
     }
 }
 
-/// Format a [`ConnOutcome`] into the user-visible system-message string. All
-/// transport-related copy lives in this one function.
-pub fn format(outcome: &ConnOutcome) -> String {
+/// Format a [`ConnOutcome`] into a user-visible string + appropriate log level.
+pub fn format(outcome: &ConnOutcome) -> (String, LogLevel) {
+    use LogLevel::*;
     match outcome {
         ConnOutcome::Connecting { protocol, addr } => {
-            format!("connecting [{}] to {addr}...", protocol.as_str())
+            (format!("connecting [{}] to {addr}...", protocol.as_str()), Info)
         }
         ConnOutcome::AlreadyActive { state } => {
-            format!("already connected/connecting (state: {state:?})")
+            (format!("already connected/connecting (state: {state:?})"), Warn)
         }
         ConnOutcome::Connected { protocol, addr } => {
-            format!("[{}] connected: {addr}", protocol.as_str())
+            (format!("[{}] connected: {addr}", protocol.as_str()), Notice)
         }
-        ConnOutcome::Disconnected => "disconnected".into(),
-        ConnOutcome::PeerClosed => "peer closed connection".into(),
-        ConnOutcome::NotConnected => "not connected — run 'con <protocol>' first".into(),
-        ConnOutcome::Sent { line } => format!("→ send: {line}"),
-        ConnOutcome::SendFailed(e) => format!("send failed: {e}"),
+        ConnOutcome::Disconnected => ("disconnected".into(), Notice),
+        ConnOutcome::PeerClosed => ("peer closed connection".into(), Warn),
+        ConnOutcome::NotConnected => {
+            ("not connected — run 'con <protocol>' first".into(), Warn)
+        }
+        ConnOutcome::Sent { line } => (format!("→ send: {line}"), Info),
+        ConnOutcome::SendFailed(e) => (format!("send failed: {e}"), Error),
         ConnOutcome::RecvJson { n, bytes, encoding } => {
-            format!("← recv #{n} ({encoding}, {bytes} bytes)")
+            (format!("← recv #{n} ({encoding}, {bytes} bytes)"), Info)
         }
         ConnOutcome::RecvInvalid { raw, error } => {
-            format!("← recv (invalid JSON: {error})\nraw: {raw}")
+            (format!("← recv (invalid JSON: {error})\nraw: {raw}"), Warn)
         }
-        ConnOutcome::Error(e) => format!("transport error: {e}"),
+        ConnOutcome::Error(e) => (format!("transport error: {e}"), Error),
     }
 }
 

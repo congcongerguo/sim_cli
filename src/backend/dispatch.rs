@@ -1,18 +1,25 @@
 //! Single source of truth for command-to-effect mapping.
-//!
-//! When you add a new [`Action`] variant the match below stops compiling
-//! until you handle it — by design.
 
 use crate::commands::Action;
+use crate::message::LogLevel;
 
 use super::Backend;
 use super::conn;
+
+fn emit_conn(chat: &mut super::chat::ChatState, outs: &[super::conn::ConnOutcome]) {
+    for o in outs {
+        let (text, level) = conn::format(o);
+        chat.push_system(text, level);
+    }
+}
 
 pub fn run_action(b: &mut Backend, action: Action) {
     match action {
         Action::Help => {
             let task_name = b.tasks.active_name().to_string();
-            b.tasks.active_mut().chat.push_system(crate::help::full_help(&task_name));
+            b.tasks.active_mut()
+                .chat
+                .push_system(crate::help::full_help(&task_name), LogLevel::Info);
         }
         Action::Clear => {
             b.tasks.active_mut().chat.clear();
@@ -21,12 +28,16 @@ pub fn run_action(b: &mut Backend, action: Action) {
         Action::Model(m) => {
             b.tasks.active_mut().chat.set_model(m);
             let model = b.tasks.active().chat.model.clone();
-            b.tasks.active_mut().chat.push_system(format!("model -> {model}"));
+            b.tasks.active_mut()
+                .chat
+                .push_system(format!("model -> {model}"), LogLevel::Notice);
         }
         Action::Plan(t) => {
             b.tasks.active_mut().chat.set_plan(t);
             let mode = format!("{:?}", b.tasks.active().chat.mode);
-            b.tasks.active_mut().chat.push_system(format!("mode -> {mode}"));
+            b.tasks.active_mut()
+                .chat
+                .push_system(format!("mode -> {mode}"), LogLevel::Notice);
         }
         Action::Demo(s) => {
             let chat = &mut b.tasks.active_mut().chat;
@@ -34,21 +45,15 @@ pub fn run_action(b: &mut Backend, action: Action) {
         }
         Action::Connect(p) => {
             let outs = b.tasks.active_mut().conn.connect(p);
-            for o in outs {
-                b.tasks.active_mut().chat.push_system(conn::format(&o));
-            }
+            emit_conn(&mut b.tasks.active_mut().chat, &outs);
         }
         Action::Disconnect => {
             let outs = b.tasks.active_mut().conn.disconnect();
-            for o in outs {
-                b.tasks.active_mut().chat.push_system(conn::format(&o));
-            }
+            emit_conn(&mut b.tasks.active_mut().chat, &outs);
         }
         Action::Send => {
             let outs = b.tasks.active_mut().conn.send_ping();
-            for o in outs {
-                b.tasks.active_mut().chat.push_system(conn::format(&o));
-            }
+            emit_conn(&mut b.tasks.active_mut().chat, &outs);
         }
         Action::TaskSwitch(name) => {
             if name.trim().is_empty() {
@@ -60,10 +65,15 @@ pub fn run_action(b: &mut Backend, action: Action) {
                     let to = b.tasks.active_name().to_string();
                     b.tasks.active_mut()
                         .chat
-                        .push_system(format!("── switched: {from} → {to} ──"));
+                        .push_system(
+                            format!("── switched: {from} → {to} ──"),
+                            LogLevel::Notice,
+                        );
                 }
                 Err(e) => {
-                    b.tasks.active_mut().chat.push_system(format!("error: {e}"));
+                    b.tasks.active_mut()
+                        .chat
+                        .push_system(format!("error: {e}"), LogLevel::Error);
                 }
             }
         }
@@ -72,10 +82,15 @@ pub fn run_action(b: &mut Backend, action: Action) {
                 let name = b.tasks.active_name().to_string();
                 b.tasks.active_mut()
                     .chat
-                    .push_system(format!("demo started on '{name}' — logging every 1s"));
+                    .push_system(
+                        format!("demo started on '{name}' — logging every 1s"),
+                        LogLevel::Notice,
+                    );
             }
             Err(e) => {
-                b.tasks.active_mut().chat.push_system(format!("error: {e}"));
+                b.tasks.active_mut()
+                    .chat
+                    .push_system(format!("error: {e}"), LogLevel::Error);
             }
         },
         Action::Stop => match b.tasks.stop_demo() {
@@ -83,10 +98,12 @@ pub fn run_action(b: &mut Backend, action: Action) {
                 let name = b.tasks.active_name().to_string();
                 b.tasks.active_mut()
                     .chat
-                    .push_system(format!("demo stopped on '{name}'"));
+                    .push_system(format!("demo stopped on '{name}'"), LogLevel::Notice);
             }
             Err(e) => {
-                b.tasks.active_mut().chat.push_system(format!("error: {e}"));
+                b.tasks.active_mut()
+                    .chat
+                    .push_system(format!("error: {e}"), LogLevel::Error);
             }
         },
     }

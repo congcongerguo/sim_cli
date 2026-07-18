@@ -4,6 +4,7 @@ use tokio::sync::{mpsc, watch};
 
 use super::chat::ChatState;
 use super::conn::{ConnState, ConnSubsystem};
+use crate::message::LogLevel;
 
 // -----------------------------------------------------------------------------
 // Static task definitions — add a row here to create a new fixed tab.
@@ -85,8 +86,14 @@ impl TaskManager {
             .map(|def| {
                 let mut chat = ChatState::new(model.clone());
                 chat.messages.clear();
-                chat.push_system(format!("[{}] {}", def.name, def.hint));
-                chat.push_system("type 'help' for commands, ←/→ to switch tabs");
+                chat.push_system(
+                    format!("[{}] {}", def.name, def.hint),
+                    LogLevel::Notice,
+                );
+                chat.push_system(
+                    "type 'help' for commands, ←/→ to switch tabs",
+                    LogLevel::Info,
+                );
                 Task {
                     name: def.name.into(),
                     chat,

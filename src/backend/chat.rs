@@ -1,6 +1,5 @@
 use crate::commands::{ModelChoice, PlanToggle};
-use crate::help::WELCOME;
-use crate::message::Message;
+use crate::message::{LogLevel, Message};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -8,8 +7,7 @@ pub enum Mode {
     Plan,
 }
 
-/// Conversation log + model/mode selection. The orchestrator funnels all
-/// user-visible text into this struct via `push_system`.
+/// Conversation log + model/mode selection.
 pub struct ChatState {
     pub messages: Vec<Message>,
     pub model: String,
@@ -19,23 +17,23 @@ pub struct ChatState {
 impl ChatState {
     pub fn new(model: String) -> Self {
         Self {
-            messages: vec![Message::System(WELCOME.into())],
+            messages: Vec::new(),
             model,
             mode: Mode::Normal,
         }
     }
 
-    pub fn push_system(&mut self, text: impl Into<String>) {
-        self.messages.push(Message::System(text.into()));
+    pub fn push_system(&mut self, text: impl Into<String>, level: LogLevel) {
+        self.messages.push(Message::System { text: text.into(), level });
     }
 
     pub fn clear(&mut self) {
         self.messages.clear();
-        self.push_system("conversation cleared");
+        self.push_system("conversation cleared", LogLevel::Notice);
     }
 
     pub fn set_model(&mut self, choice: ModelChoice) {
-        self.model = format!("mock-{}", choice.slug());
+        self.model = choice.slug().to_string();
     }
 
     pub fn set_plan(&mut self, toggle: PlanToggle) {
@@ -52,19 +50,22 @@ mod tests {
 
     #[test]
     fn set_model_updates_model_string() {
-        let mut c = ChatState::new("mock-claude".into());
+        let mut c = ChatState::new("claude".into());
         c.set_model(ModelChoice::Haiku);
-        assert_eq!(c.model, "mock-haiku");
+        assert_eq!(c.model, "haiku");
     }
 
     #[test]
     fn clear_leaves_only_cleared_notice() {
-        let mut c = ChatState::new("mock-claude".into());
-        c.push_system("noise");
+        let mut c = ChatState::new("claude".into());
+        c.push_system("noise", LogLevel::Info);
         c.clear();
         assert_eq!(c.messages.len(), 1);
         match &c.messages[0] {
-            Message::System(s) => assert_eq!(s, "conversation cleared"),
+            Message::System { text, level } => {
+                assert_eq!(text, "conversation cleared");
+                assert_eq!(*level, LogLevel::Notice);
+            }
             other => panic!("unexpected: {other:?}"),
         }
     }

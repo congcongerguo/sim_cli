@@ -21,7 +21,7 @@ use chrono::{DateTime, Local};
 use tokio::sync::{mpsc, watch};
 
 use crate::commands::Action;
-use crate::message::Message;
+use crate::message::{LogLevel, Message};
 
 pub use chat::Mode;
 pub use conn::ConnState;
@@ -67,8 +67,14 @@ impl ViewState {
             .collect();
         Self {
             messages: Arc::new(vec![
-                Message::System(format!("[{}] {}", default_def.name, default_def.hint)),
-                Message::System("type 'help' for commands, ←/→ to switch tabs".into()),
+                Message::System {
+                    text: format!("[{}] {}", default_def.name, default_def.hint),
+                    level: LogLevel::Notice,
+                },
+                Message::System {
+                    text: "type 'help' for commands, ←/→ to switch tabs".into(),
+                    level: LogLevel::Info,
+                },
             ]),
             model,
             mode: Mode::Normal,
@@ -127,7 +133,7 @@ impl Backend {
                 self.modal.resolve(choice, self.tasks.active_chat_mut());
             }
             Command::ShowSystem(text) => {
-                self.tasks.active_mut().chat.push_system(text);
+                self.tasks.active_mut().chat.push_system(text, LogLevel::Warn);
             }
         }
     }
@@ -162,7 +168,7 @@ pub async fn run(
                     let ts = Local::now().format("%H:%M:%S").to_string();
                     backend.tasks.tasks[task_idx]
                         .chat
-                        .push_system(format!("[demo tick {ts}]"));
+                        .push_system(format!("[demo tick {ts}]"), LogLevel::Debug);
                 }
             }
             _ = tick.tick() => {}  // periodic drain for transport events
@@ -173,7 +179,8 @@ pub async fn run(
             while let Ok(ev) = task.conn.ev_rx.try_recv() {
                 let outs = task.conn.handle_event(ev);
                 for o in outs {
-                    task.chat.push_system(conn::format(&o));
+                    let (text, level) = conn::format(&o);
+                    task.chat.push_system(text, level);
                 }
             }
         }
@@ -281,19 +288,19 @@ mod tests {
         assert_eq!(view.active_task, "conn");
         // conn tab should NOT contain "hello from main"
         let has_main_msg = view.messages.iter().any(|m| {
-            matches!(m, Message::System(s) if s.contains("hello from main"))
+            matches!(m, Message::System { text: s, .. } if s.contains("hello from main"))
         });
         assert!(!has_main_msg, "conn tab should not see main's messages");
         // conn tab should have its own welcome
         let has_conn_welcome = view.messages.iter().any(|m| {
-            matches!(m, Message::System(s) if s.contains("[conn]"))
+            matches!(m, Message::System { text: s, .. } if s.contains("[conn]"))
         });
         assert!(has_conn_welcome, "conn tab should have its own welcome");
         // Switch back to main — should see main's message
         b.handle_command(Command::Run(Action::TaskSwitch("main".into())));
         let view = b.snapshot();
         let has_main_msg = view.messages.iter().any(|m| {
-            matches!(m, Message::System(s) if s.contains("hello from main"))
+            matches!(m, Message::System { text: s, .. } if s.contains("hello from main"))
         });
         assert!(has_main_msg, "main tab should still have its message");
     }

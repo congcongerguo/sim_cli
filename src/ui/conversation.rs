@@ -7,8 +7,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use crate::backend::{Mode, ViewState};
-use crate::message::Message;
-use crate::ui::markdown::render_markdown;
+use crate::message::{LogLevel, Message};
 use crate::ui::tool_card::tool_card_lines;
 
 pub fn render(
@@ -27,23 +26,20 @@ pub fn render(
                 if text.is_empty() && !*streaming {
                     continue;
                 }
-                let mut lines = render_markdown(text);
+                // Plain text rendering — no markdown.
+                for line in text.lines() {
+                    all.push(Line::from(Span::styled(
+                        line.to_string(),
+                        Style::default().fg(Color::White),
+                    )));
+                }
                 if *streaming {
-                    let last = lines.last_mut();
-                    let cursor = Span::styled(
+                    all.push(Line::from(Span::styled(
                         "▌",
                         Style::default()
                             .fg(Color::Cyan)
                             .add_modifier(Modifier::SLOW_BLINK),
-                    );
-                    if let Some(l) = last {
-                        l.spans.push(cursor);
-                    } else {
-                        lines.push(Line::from(cursor));
-                    }
-                }
-                for l in lines {
-                    all.push(l);
+                    )));
                 }
                 all.push(Line::from(""));
             }
@@ -53,11 +49,12 @@ pub fn render(
                 }
                 all.push(Line::from(""));
             }
-            Message::System(text) => {
+            Message::System { text, level } => {
+                let color = log_level_color(*level);
                 for line in text.lines() {
                     all.push(Line::from(Span::styled(
                         line.to_string(),
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(color),
                     )));
                 }
                 all.push(Line::from(""));
@@ -93,7 +90,6 @@ pub fn render(
     let total_lines = all.len() as u16;
     let visible = inner.height;
 
-    // Auto-adjust scroll when new content arrives while user is scrolled up.
     if !follow_tail {
         let prev = prev_total_lines.get();
         if total_lines > prev {
@@ -131,6 +127,16 @@ pub fn render(
             Style::default().bg(Color::Yellow).fg(Color::Black),
         ));
         f.render_widget(p, hint_area);
+    }
+}
+
+fn log_level_color(level: LogLevel) -> Color {
+    match level {
+        LogLevel::Error => Color::Red,
+        LogLevel::Warn => Color::Yellow,
+        LogLevel::Notice => Color::Cyan,
+        LogLevel::Info => Color::White,
+        LogLevel::Debug => Color::DarkGray,
     }
 }
 

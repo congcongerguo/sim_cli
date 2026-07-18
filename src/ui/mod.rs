@@ -1,6 +1,5 @@
 pub mod conversation;
 pub mod input;
-pub mod markdown;
 pub mod modal;
 pub mod state_panel;
 pub mod statusline;

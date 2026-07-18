@@ -1,0 +1,2 @@
+claude --permission-mode bypassPermissions
+

@@ -2,9 +2,6 @@ use std::fmt::Write;
 
 use crate::commands::COMMANDS;
 
-pub const WELCOME: &str =
-    "Welcome — type 'help' (or just 'h') and Enter to see commands.";
-
 const HOTKEYS: &str = "\
 Hotkeys:
   Ctrl+G  help          Ctrl+L  clear         Ctrl+Q  exit
