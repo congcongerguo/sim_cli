@@ -326,9 +326,15 @@ mod tests {
     #[test]
     fn close_task_adjusts_active() {
         let mut mgr = make_mgr();
+        // Need at least 3 tasks to test index adjustment; add one if needed.
+        if mgr.tasks.len() < 3 {
+            mgr.add("extra".into(), "mock-claude".into()).unwrap();
+        }
         let second = mgr.tasks[1].name.clone();
+        // active=0, close index 1, active stays at 0
         mgr.close(&second).unwrap();
         assert_eq!(mgr.active_name(), TASK_DEFS[0].name);
+        // Switch to last, then close first
         let last = mgr.tasks.last().unwrap().name.clone();
         mgr.switch_to(&last).unwrap();
         mgr.close(TASK_DEFS[0].name).unwrap();

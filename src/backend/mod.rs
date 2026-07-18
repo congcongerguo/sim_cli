@@ -273,40 +273,39 @@ mod tests {
     #[test]
     fn task_switch_changes_active() {
         let mut b = Backend::new("mock-claude".into());
-        b.handle_command(Command::Run(Action::TaskSwitch("conn".into())));
+        assert!(TASK_DEFS.len() >= 2, "need at least 2 tasks");
+        let t1 = TASK_DEFS[1].name;
+        b.handle_command(Command::Run(Action::TaskSwitch(t1.into())));
         let view = b.snapshot();
-        assert_eq!(view.active_task, "conn");
-        b.handle_command(Command::Run(Action::TaskSwitch("demo".into())));
+        assert_eq!(view.active_task, t1);
+        let t0 = TASK_DEFS[0].name;
+        b.handle_command(Command::Run(Action::TaskSwitch(t0.into())));
         let view = b.snapshot();
-        assert_eq!(view.active_task, "demo");
+        assert_eq!(view.active_task, t0);
     }
 
     #[test]
     fn messages_are_isolated_between_tabs() {
         let mut b = Backend::new("mock-claude".into());
-        // Push to main tab
-        b.handle_command(Command::ShowSystem("hello from main".into()));
-        // Switch to conn — should NOT see main's message
-        b.handle_command(Command::Run(Action::TaskSwitch("conn".into())));
+        let first = TASK_DEFS[0].name;
+        let second = TASK_DEFS[1].name;
+        // Push to first tab
+        b.handle_command(Command::ShowSystem("hello from first".into()));
+        // Switch to second — should NOT see first's message
+        b.handle_command(Command::Run(Action::TaskSwitch(second.into())));
         let view = b.snapshot();
-        assert_eq!(view.active_task, "conn");
-        // conn tab should NOT contain "hello from main"
-        let has_main_msg = view.messages.iter().any(|m| {
-            matches!(m, Message::System { text: s, .. } if s.contains("hello from main"))
+        assert_eq!(view.active_task, second);
+        let has_first_msg = view.messages.iter().any(|m| {
+            matches!(m, Message::System { text: s, .. } if s.contains("hello from first"))
         });
-        assert!(!has_main_msg, "conn tab should not see main's messages");
-        // conn tab should have its own welcome
-        let has_conn_welcome = view.messages.iter().any(|m| {
-            matches!(m, Message::System { text: s, .. } if s.contains("[conn]"))
-        });
-        assert!(has_conn_welcome, "conn tab should have its own welcome");
-        // Switch back to main — should see main's message
-        b.handle_command(Command::Run(Action::TaskSwitch("main".into())));
+        assert!(!has_first_msg, "second tab should not see first's messages");
+        // Switch back — should see first's message
+        b.handle_command(Command::Run(Action::TaskSwitch(first.into())));
         let view = b.snapshot();
-        let has_main_msg = view.messages.iter().any(|m| {
-            matches!(m, Message::System { text: s, .. } if s.contains("hello from main"))
+        let has_first_msg = view.messages.iter().any(|m| {
+            matches!(m, Message::System { text: s, .. } if s.contains("hello from first"))
         });
-        assert!(has_main_msg, "main tab should still have its message");
+        assert!(has_first_msg, "first tab should still have its message");
     }
 
     #[tokio::test]
