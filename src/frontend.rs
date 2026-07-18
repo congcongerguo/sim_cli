@@ -35,7 +35,7 @@ enum CompletionCtx {
 
 pub struct Frontend {
     pub input: TextArea<'static>,
-    pub(crate) scroll: Cell<u16>,
+    pub(crate) scroll: Cell<u32>,
     pub(crate) follow_tail: Cell<bool>,
     pub(crate) menu_idx: usize,
     pub(crate) tab_cycle: Option<TabCycle>,
@@ -49,7 +49,7 @@ pub struct Frontend {
     history: Vec<String>,
     history_cursor: Option<usize>,
     pub(crate) viewport_height: Cell<u16>,
-    pub(crate) prev_total_lines: Cell<u16>,
+    pub(crate) prev_total_lines: Cell<u32>,
     /// Lines added since user scrolled up (0 = following or content fits).
     unseen_lines: Cell<u32>,
     /// Total lines the last time we were in follow mode.
@@ -64,7 +64,7 @@ impl Frontend {
         let view = view_rx.borrow().clone();
         Self {
             input,
-            scroll: Cell::new(0),
+            scroll: Cell::new(0u32),
             follow_tail: Cell::new(true),
             menu_idx: 0,
             tab_cycle: None,
@@ -77,7 +77,7 @@ impl Frontend {
             history: Vec::new(),
             history_cursor: None,
             viewport_height: Cell::new(20),
-            prev_total_lines: Cell::new(0),
+            prev_total_lines: Cell::new(0u32),
             unseen_lines: Cell::new(0),
             total_at_follow: Cell::new(0),
         }
@@ -125,7 +125,7 @@ impl Frontend {
             self.unseen_lines.set(unseen);
         }
         self.viewport_height.set(out.viewport_height);
-        self.prev_total_lines.set(out.total_lines);
+        self.prev_total_lines.set(out.total_lines as u32);
     }
 
     pub async fn run<B: Backend>(&mut self, term: &mut Terminal<B>) -> Result<()> {
@@ -134,7 +134,7 @@ impl Frontend {
             let state = self.build_render_state();
             let mut render_out = crate::ui::render_state::RenderOutput {
                 viewport_height: self.viewport_height.get(),
-                total_lines: self.prev_total_lines.get(),
+                total_lines: self.prev_total_lines.get() as u16,
             };
             term.draw(|f| {
                 render_out = crate::ui::ratatui_renderer::RatatuiRenderer::draw(f, &state);
@@ -324,18 +324,14 @@ impl Frontend {
                 return;
             }
             (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {
-                let step = self.viewport_height.get().max(1);
-                let total = self.view.buffer_total_lines.min(u16::MAX as u64) as u16;
-                let max_scroll = total.saturating_sub(self.viewport_height.get().max(1));
+                let step = self.viewport_height.get().max(1) as u32;
+                let total = self.view.buffer_total_lines as u32;
+                let max_scroll = total.saturating_sub(self.viewport_height.get().max(1) as u32);
                 let cur = if self.follow_tail.get() {
-                    // First detach from bottom: scroll_offset must be an
-                    // absolute line number (from the very first message).
-                    // Bottom absolute = evicted_lines + max_scroll.
-                    let evicted = self.view.evicted_lines.min(u16::MAX as u64) as u16;
+                    let evicted = self.view.evicted_lines as u32;
                     let bottom_abs = evicted.saturating_add(max_scroll);
                     bottom_abs.saturating_sub(step)
                 } else {
-                    // Already detached: go further up.
                     self.scroll.get().saturating_sub(step)
                 };
                 self.scroll.set(cur);
@@ -343,14 +339,14 @@ impl Frontend {
                 return;
             }
             (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
-                let step = self.viewport_height.get().max(1);
-                let total = self.view.buffer_total_lines.min(u16::MAX as u64) as u16;
-                let max_scroll = total.saturating_sub(self.viewport_height.get().max(1));
+                let step = self.viewport_height.get().max(1) as u32;
+                let total = self.view.buffer_total_lines as u32;
+                let max_scroll = total.saturating_sub(self.viewport_height.get().max(1) as u32);
                 if self.follow_tail.get() {
                     return;
                 }
                 let cur = self.scroll.get().saturating_add(step);
-                let evicted = self.view.evicted_lines.min(u16::MAX as u64) as u16;
+                let evicted = self.view.evicted_lines as u32;
                 let bottom_abs = evicted.saturating_add(max_scroll);
                 if cur >= bottom_abs {
                     self.follow_tail.set(true);
@@ -361,8 +357,7 @@ impl Frontend {
                 return;
             }
             (KeyCode::Home, _) => {
-                // Top of current buffer = evicted_lines (absolute)
-                self.scroll.set(self.view.evicted_lines.min(u16::MAX as u64) as u16);
+                self.scroll.set(self.view.evicted_lines as u32);
                 self.follow_tail.set(false);
                 return;
             }
