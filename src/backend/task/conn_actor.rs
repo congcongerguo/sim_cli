@@ -4,7 +4,7 @@ use crate::transport::{Protocol, TransportEvent};
 use super::super::chat::ChatState;
 use super::super::conn::{self, ConnSubsystem};
 use super::registry::TaskDef;
-use super::{cmd, CommandDef, SubDef, TaskActor, TaskSnapshot};
+use super::{base_commands, cmd, CommandDef, SubDef, TaskActor, TaskSnapshot};
 
 #[cfg(feature = "zmq")]
 const CON_SUBS: &[SubDef] = &[
@@ -53,14 +53,11 @@ impl ConnTask {
 
 impl TaskActor for ConnTask {
     fn commands(&self) -> Vec<CommandDef> {
-        vec![
-            cmd("help", "show commands"),
-            cmd("clear", "clear log"),
-            cmd("exit", "quit"),
-            CommandDef { name: "con", desc: "connect transport", subs: CON_SUBS },
-            cmd("close", "disconnect"),
-            cmd("send", "send message"),
-        ]
+        let mut v = base_commands();
+        v.push(CommandDef { name: "con", desc: "connect transport", subs: CON_SUBS });
+        v.push(cmd("close", "disconnect"));
+        v.push(cmd("send", "send message"));
+        v
     }
 
     fn handle_own(&mut self, cmd: &str, sub: Option<&str>, _args: &[&str]) -> Vec<Message> {

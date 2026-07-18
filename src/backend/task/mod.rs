@@ -9,11 +9,10 @@ pub mod conn_actor;
 pub mod demo_actor;
 pub mod registry;
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::sync::{mpsc, watch};
-
-use std::sync::Arc;
 
 use crate::message::{LogLevel, Message};
 use crate::transport::TransportEvent;
@@ -55,16 +54,22 @@ pub struct TaskSnapshot {
     pub latest_recv_at: Option<chrono::DateTime<chrono::Local>>,
 }
 
+/// Shared commands every task provides — use `base_commands()` in `commands()`.
+pub fn base_commands() -> Vec<CommandDef> {
+    vec![
+        cmd("help", "show commands"),
+        cmd("clear", "clear log"),
+        cmd("exit", "quit"),
+    ]
+}
+
 // ---------------------------------------------------------------------------
 // TaskActor trait
 // ---------------------------------------------------------------------------
 
 pub trait TaskActor: Send + 'static {
-    /// Commands supported by this task (autocomplete).
     fn commands(&self) -> Vec<CommandDef>;
 
-    /// Handle a parsed command line.
-    /// Default: matches "help"/"clear", delegates the rest to `handle_own`.
     fn handle_command(&mut self, cmd: &str, sub: Option<&str>, args: &[&str]) -> Vec<Message> {
         match cmd {
             "help" => self.build_help(),
@@ -76,25 +81,18 @@ pub trait TaskActor: Send + 'static {
         }
     }
 
-    /// Task-specific commands.
     fn handle_own(&mut self, cmd: &str, sub: Option<&str>, args: &[&str]) -> Vec<Message>;
-
-    /// State snapshot for the Router.
     fn snapshot(&self) -> TaskSnapshot;
 
-    /// Periodic tick (every 1s). Default: no-op.
     fn tick(&mut self) -> Vec<Message> { vec![] }
 
-    /// Transport event callback. Default: no-op.
     #[allow(dead_code)]
     fn on_transport(&mut self, _ev: TransportEvent) -> Vec<Message> { vec![] }
 
-    /// Chat log access.
     #[allow(dead_code)]
     fn chat(&self) -> &ChatState;
     fn chat_mut(&mut self) -> &mut ChatState;
 
-    /// Build help text from self.commands().
     fn build_help(&self) -> Vec<Message> {
         let cmds = self.commands();
         let mut s = String::from("commands:\n");
@@ -118,7 +116,6 @@ pub struct TaskHandle {
     pub state_rx: watch::Receiver<TaskSnapshot>,
 }
 
-/// Spawn a task actor into a background tokio task.
 pub fn spawn_actor(actor: impl TaskActor) -> TaskHandle {
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(64);
     let snapshot = actor.snapshot();
@@ -160,17 +157,14 @@ pub fn spawn_actor(actor: impl TaskActor) -> TaskHandle {
 }
 
 // ---------------------------------------------------------------------------
-// Actor factory dispatch — maps task name to create callback.
+// Actor factory dispatch
 // ---------------------------------------------------------------------------
 
-/// Handle returned when an actor is spawned.
 pub struct TaskRuntime {
     pub handle: TaskHandle,
     pub commands: Arc<Vec<CommandDef>>,
 }
 
-/// Look up the actor factory for `name` and call it.
-/// Add a new branch here when adding a new task type.
 pub fn create_actor(name: &str, model: String, def: &'static TaskDef) -> Option<TaskRuntime> {
     #[cfg(feature = "conn-task")]
     if name == "conn" { return Some(conn_actor::create(model, def)); }

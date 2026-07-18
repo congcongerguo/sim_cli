@@ -3,7 +3,7 @@ use crate::message::{LogLevel, Message};
 
 use super::super::chat::ChatState;
 use super::registry::TaskDef;
-use super::{cmd, CommandDef, TaskActor, TaskSnapshot};
+use super::{base_commands, cmd, CommandDef, TaskActor, TaskSnapshot};
 
 pub struct DemoTask {
     chat: ChatState,
@@ -19,13 +19,10 @@ impl DemoTask {
 
 impl TaskActor for DemoTask {
     fn commands(&self) -> Vec<CommandDef> {
-        vec![
-            cmd("help", "show commands"),
-            cmd("clear", "clear log"),
-            cmd("exit", "quit"),
-            cmd("start", "begin periodic logging"),
-            cmd("stop", "stop periodic logging"),
-        ]
+        let mut v = base_commands();
+        v.push(cmd("start", "begin periodic logging"));
+        v.push(cmd("stop", "stop periodic logging"));
+        v
     }
 
     fn handle_own(&mut self, cmd: &str, _sub: Option<&str>, _args: &[&str]) -> Vec<Message> {
