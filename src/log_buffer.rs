@@ -25,13 +25,17 @@ pub fn msg_line_count(msg: &Message) -> u64 {
 pub struct LogBuffer {
     messages: VecDeque<Message>,
     max_entries: usize,
-    total_evicted: u64,
-    total_lines: u64,
+    total_evicted: u64,      // count of messages evicted
+    total_lines: u64,        // current render line count
+    evicted_lines: u64,      // line count of evicted messages (for scroll correction)
 }
 
 impl LogBuffer {
     pub fn new(max_entries: usize) -> Self {
-        Self { messages: VecDeque::new(), max_entries, total_evicted: 0, total_lines: 0 }
+        Self {
+            messages: VecDeque::new(), max_entries,
+            total_evicted: 0, total_lines: 0, evicted_lines: 0,
+        }
     }
 
     /// Add a message. If over capacity, evicts oldest.
@@ -41,7 +45,9 @@ impl LogBuffer {
         self.total_lines += added;
         while self.messages.len() > self.max_entries {
             if let Some(old) = self.messages.pop_front() {
-                self.total_lines -= msg_line_count(&old);
+                let old_lines = msg_line_count(&old);
+                self.total_lines -= old_lines;
+                self.evicted_lines += old_lines;
                 self.total_evicted += 1;
             }
         }
@@ -63,9 +69,15 @@ impl LogBuffer {
         self.messages.clear();
     }
 
-    /// Cumulative count of entries evicted since creation.
-    pub fn evicted(&self) -> u64 {
+    /// Cumulative count of entries evicted (message count).
+    #[allow(dead_code)]
+    pub fn evicted_entries(&self) -> u64 {
         self.total_evicted
+    }
+
+    /// Cumulative line count evicted — use this for scroll correction.
+    pub fn evicted_lines(&self) -> u64 {
+        self.evicted_lines
     }
 
     /// Total render lines (maintained incrementally — O(1)).
@@ -122,7 +134,7 @@ mod tests {
             buf.push(msg(&format!("line {i}")));
         }
         assert_eq!(buf.len(), 5);
-        assert_eq!(buf.evicted(), 0);
+        assert_eq!(buf.evicted_entries(), 0);
         let all: Vec<String> = buf.iter().map(|m| match m {
             Message::System { text, .. } => text.clone(),
             _ => String::new(),
@@ -149,12 +161,12 @@ mod tests {
         let mut buf = LogBuffer::new(2);
         buf.push(msg("a"));
         buf.push(msg("b"));
-        assert_eq!(buf.evicted(), 0);
+        assert_eq!(buf.evicted_entries(), 0);
         buf.push(msg("c")); // evicts "a"
         assert_eq!(buf.len(), 2);
-        assert_eq!(buf.evicted(), 1);
+        assert_eq!(buf.evicted_entries(), 1);
         buf.push(msg("d")); // evicts "b"
-        assert_eq!(buf.evicted(), 2);
+        assert_eq!(buf.evicted_entries(), 2);
     }
 
     #[test]
@@ -163,10 +175,11 @@ mod tests {
         buf.push(msg("a"));
         buf.push(msg("b"));
         buf.push(msg("c"));
-        assert_eq!(buf.evicted(), 1);
+        assert_eq!(buf.evicted_entries(), 1);
         buf.clear();
         assert_eq!(buf.len(), 0);
-        assert_eq!(buf.evicted(), 1, "clear must not reset eviction counter");
+        assert_eq!(buf.evicted_entries(), 1, "clear must not reset eviction counter");
+        assert_eq!(buf.evicted_lines(), 2, "clear must not reset eviction line counter");
     }
 
     #[test]
@@ -174,7 +187,7 @@ mod tests {
         let buf = LogBuffer::new(10);
         assert!(buf.is_empty());
         assert_eq!(buf.len(), 0);
-        assert_eq!(buf.evicted(), 0);
+        assert_eq!(buf.evicted_entries(), 0);
         assert_eq!(buf.iter().count(), 0);
     }
 
@@ -197,7 +210,7 @@ mod tests {
         assert_eq!(buf.len(), 1);
         buf.push(msg("replaced"));
         assert_eq!(buf.len(), 1);
-        assert_eq!(buf.evicted(), 1);
+        assert_eq!(buf.evicted_entries(), 1);
     }
 
     #[test]
@@ -205,7 +218,7 @@ mod tests {
         let mut buf = LogBuffer::new(0);
         buf.push(msg("a"));
         assert_eq!(buf.len(), 0);
-        assert_eq!(buf.evicted(), 1);
+        assert_eq!(buf.evicted_entries(), 1);
     }
 
     #[test]
@@ -236,7 +249,7 @@ mod tests {
         assert_eq!(buf.total_lines(), 4);
         buf.push(msg("c")); // +2, evicts "a" (-2) -> total 4
         assert_eq!(buf.total_lines(), 4);
-        assert_eq!(buf.evicted(), 1);
+        assert_eq!(buf.evicted_entries(), 1);
     }
 
     #[test]
@@ -246,11 +259,51 @@ mod tests {
             buf.push(msg(&format!("line {i}")));
         }
         assert_eq!(buf.len(), 5);
-        assert_eq!(buf.evicted(), 15);
+        assert_eq!(buf.evicted_entries(), 15);
         let first = match buf.iter().next().unwrap() {
             Message::System { text, .. } => text.clone(),
             _ => String::new(),
         };
         assert_eq!(first, "line 15");
+    }
+
+    #[test]
+    fn total_lines_consistent_under_sustained_load() {
+        let mut buf = LogBuffer::new(200);
+        // Push 1000 messages — should stabilize at 200 entries.
+        for i in 0..1000 {
+            buf.push(msg(&format!("line {i}")));
+        }
+        assert_eq!(buf.len(), 200, "buffer must not exceed max_entries");
+        assert_eq!(buf.evicted_entries(), 800, "should have evicted 800 messages");
+        // Each System message = 2 lines (text + blank separator)
+        assert_eq!(buf.total_lines(), 400, "200 messages × 2 lines");
+    }
+
+    #[test]
+    fn scroll_auto_resume_when_viewed_content_evicted() {
+        let mut buf = LogBuffer::new(5);
+        // Fill buffer: 5 entries, 10 lines
+        for i in 0..5 {
+            buf.push(msg(&format!("line {i}")));
+        }
+        let evicted_before = buf.evicted_entries();
+        // Push more — eviction starts
+        buf.push(msg("line 5"));
+        assert!(buf.evicted_entries() > evicted_before, "eviction should occur");
+        // Simulate scroll check: evicted_lines should be > 0 after eviction.
+        assert!(buf.evicted_lines() > 0, "should have evicted some lines");
+        // scroll=0 < evicted_lines should trigger auto-resume.
+        assert!(0u64 < buf.evicted_lines(), "evicted lines should be > scroll position 0");
+    }
+
+    #[test]
+    fn entry_count_strictly_bounded() {
+        let mut buf = LogBuffer::new(200);
+        for i in 0..500 {
+            buf.push(msg(&format!("line {i}")));
+            assert!(buf.len() <= 200, "len {} exceeded 200 at iteration {i}", buf.len());
+        }
+        assert_eq!(buf.len(), 200);
     }
 }
