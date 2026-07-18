@@ -58,6 +58,20 @@ pub enum Action {
     Connect(Protocol),
     Disconnect,
     Send,
+    /// Manage task tabs: task <new|switch|close|list> [name]
+    #[allow(dead_code)]
+    TaskNew(String),
+    #[allow(dead_code)]
+    TaskClose(String),
+    /// Switch to a task by name (used by Left/Right key navigation)
+    TaskSwitch(String),
+    /// List all tasks
+    #[allow(dead_code)]
+    TaskList,
+    /// Demo logger: start periodic ticks on the active task
+    Start,
+    /// Demo logger: stop periodic ticks on the active task
+    Stop,
 }
 
 // -----------------------------------------------------------------------------
@@ -72,14 +86,19 @@ pub struct SubSpec {
 
 /// Description of a CLI command. `build` is called by the parser after args
 /// have been validated against `subs`; it returns the typed [`Action`].
+///
+/// The second argument to `build` is an optional free-form *value* — only
+/// populated when [`sub_takes_value`] is true and the user supplies an extra
+/// token after the sub-argument (e.g. `task new mytask` → `Some("mytask")`).
 #[derive(Debug)]
 pub struct CommandSpec {
     pub name: &'static str,
     pub desc: &'static str,
     pub subs: &'static [SubSpec],
-    /// Build the action from the (already-validated) sub-name. `None` for
-    /// no-arg commands; `Some(name)` is guaranteed to be one of `subs[i].name`.
-    pub build: fn(Option<&'static str>) -> Action,
+    /// When true the sub-command accepts an additional free-form value token.
+    pub sub_takes_value: bool,
+    /// Build the action from the (already-validated) sub-name + optional value.
+    pub build: fn(Option<&'static str>, Option<String>) -> Action,
 }
 
 const MODEL_SUBS: &[SubSpec] = &[
@@ -109,55 +128,78 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "help",
         desc: "show available commands",
         subs: &[],
-        build: |_| Action::Help,
+        sub_takes_value: false,
+        build: |_, _| Action::Help,
     },
     CommandSpec {
         name: "clear",
         desc: "clear the conversation",
         subs: &[],
-        build: |_| Action::Clear,
+        sub_takes_value: false,
+        build: |_, _| Action::Clear,
     },
     CommandSpec {
         name: "exit",
         desc: "leave the CLI",
         subs: &[],
-        build: |_| Action::Exit,
+        sub_takes_value: false,
+        build: |_, _| Action::Exit,
     },
     CommandSpec {
         name: "model",
         desc: "switch model: model <claude|opus|haiku>",
         subs: MODEL_SUBS,
-        build: |s| Action::Model(parse_model(s.expect("validated"))),
+        sub_takes_value: false,
+        build: |s, _| Action::Model(parse_model(s.expect("validated"))),
     },
     CommandSpec {
         name: "plan",
         desc: "set plan mode: plan <on|off>",
         subs: PLAN_SUBS,
-        build: |s| Action::Plan(parse_plan(s.expect("validated"))),
+        sub_takes_value: false,
+        build: |s, _| Action::Plan(parse_plan(s.expect("validated"))),
     },
     CommandSpec {
         name: "demo",
         desc: "show a UI demo: demo <chat|code|tool>",
         subs: DEMO_SUBS,
-        build: |s| Action::Demo(parse_demo(s.expect("validated"))),
+        sub_takes_value: false,
+        build: |s, _| Action::Demo(parse_demo(s.expect("validated"))),
     },
     CommandSpec {
         name: "con",
         desc: "connect a transport: con <tcp|zmq>",
         subs: CON_SUBS,
-        build: |s| Action::Connect(parse_proto(s.expect("validated"))),
+        sub_takes_value: false,
+        build: |s, _| Action::Connect(parse_proto(s.expect("validated"))),
     },
     CommandSpec {
         name: "close",
         desc: "disconnect the current transport",
         subs: &[],
-        build: |_| Action::Disconnect,
+        sub_takes_value: false,
+        build: |_, _| Action::Disconnect,
     },
     CommandSpec {
         name: "send",
         desc: "build a JSON message, send it, await reply",
         subs: &[],
-        build: |_| Action::Send,
+        sub_takes_value: false,
+        build: |_, _| Action::Send,
+    },
+    CommandSpec {
+        name: "start",
+        desc: "start demo periodic logging on current task",
+        subs: &[],
+        sub_takes_value: false,
+        build: |_, _| Action::Start,
+    },
+    CommandSpec {
+        name: "stop",
+        desc: "stop demo periodic logging on current task",
+        subs: &[],
+        sub_takes_value: false,
+        build: |_, _| Action::Stop,
     },
 ];
 
@@ -204,6 +246,7 @@ pub enum ParseError {
     UnknownArg(&'static CommandSpec, String),
     AmbiguousArg(&'static CommandSpec, Vec<&'static str>),
     UnexpectedArg(&'static CommandSpec, String),
+    CommandNotAllowed(String, String),
 }
 
 impl fmt::Display for ParseError {
@@ -232,6 +275,9 @@ impl fmt::Display for ParseError {
             ParseError::UnexpectedArg(def, s) => {
                 write!(f, "'{}' takes no arguments (got '{s}')", def.name)
             }
+            ParseError::CommandNotAllowed(cmd, task) => {
+                write!(f, "'{cmd}' is not available in the '{task}' tab")
+            }
         }
     }
 }
@@ -240,6 +286,26 @@ impl std::error::Error for ParseError {}
 
 fn sub_names(def: &CommandSpec) -> Vec<&'static str> {
     def.subs.iter().map(|s| s.name).collect()
+}
+
+// -----------------------------------------------------------------------------
+// Task-scoped command filter
+// -----------------------------------------------------------------------------
+
+/// Returns the set of allowed command names for a task. `None` = all allowed.
+pub fn task_filter(task_name: &str) -> Option<&'static [&'static str]> {
+    match task_name {
+        "conn" => Some(&["help", "clear", "exit", "con", "close", "send"]),
+        "demo" => Some(&["help", "clear", "exit", "start", "stop"]),
+        _ => None, // "main" and unknown: all commands
+    }
+}
+
+pub fn is_command_allowed(cmd_name: &str, task_name: &str) -> bool {
+    match task_filter(task_name) {
+        Some(allowed) => allowed.contains(&cmd_name),
+        None => true,
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -257,14 +323,16 @@ pub fn find_command(name: &str) -> Option<&'static CommandSpec> {
     COMMANDS.iter().find(|c| c.name == name)
 }
 
-pub fn matching_commands(prefix: &str) -> Vec<(&'static str, &'static str)> {
+pub fn matching_commands(prefix: &str, task: Option<&str>) -> Vec<(&'static str, &'static str)> {
     let p = prefix.trim();
     if p.is_empty() {
         return Vec::new();
     }
+    let filter = task.and_then(task_filter);
     COMMANDS
         .iter()
         .filter(|c| c.name.starts_with(p))
+        .filter(|c| filter.map_or(true, |f| f.contains(&c.name)))
         .map(|c| (c.name, c.desc))
         .collect()
 }
@@ -377,7 +445,7 @@ pub fn completion_ctx(input: &str) -> CompletionCtx {
 // Parse a fully-typed input line into an Action
 // -----------------------------------------------------------------------------
 
-pub fn parse_action(input: &str) -> Result<Action, ParseError> {
+pub fn parse_action(input: &str, task: Option<&str>) -> Result<Action, ParseError> {
     let trimmed = input.trim();
     if trimmed.is_empty() {
         return Err(ParseError::Empty);
@@ -392,26 +460,47 @@ pub fn parse_action(input: &str) -> Result<Action, ParseError> {
         Resolve::None => return Err(ParseError::UnknownCommand(cmd_tok.to_string())),
     };
 
+    // Check task-scoped command filter
+    if let Some(task_name) = task {
+        if !is_command_allowed(cmd.name, task_name) {
+            return Err(ParseError::CommandNotAllowed(
+                cmd.name.to_string(),
+                task_name.to_string(),
+            ));
+        }
+    }
+
     if cmd.subs.is_empty() {
         if !rest.is_empty() {
             return Err(ParseError::UnexpectedArg(cmd, rest.join(" ")));
         }
-        return Ok((cmd.build)(None));
+        return Ok((cmd.build)(None, None));
     }
 
     if rest.is_empty() {
         return Err(ParseError::MissingArg(cmd));
     }
-    if rest.len() > 1 {
-        return Err(ParseError::UnexpectedArg(cmd, rest[1..].join(" ")));
-    }
+
     let sub_name = match resolve_sub_prefix(cmd, rest[0]) {
         Resolve::Unique(name) => name,
         Resolve::Ambiguous(list) => return Err(ParseError::AmbiguousArg(cmd, list)),
         Resolve::None => return Err(ParseError::UnknownArg(cmd, rest[0].to_string())),
     };
 
-    Ok((cmd.build)(Some(sub_name)))
+    if cmd.sub_takes_value {
+        // For value-taking commands, the rest[1..] is the optional value.
+        let val = if rest.len() > 1 {
+            Some(rest[1..].join(" "))
+        } else {
+            None
+        };
+        return Ok((cmd.build)(Some(sub_name), val));
+    }
+
+    if rest.len() > 1 {
+        return Err(ParseError::UnexpectedArg(cmd, rest[1..].join(" ")));
+    }
+    Ok((cmd.build)(Some(sub_name), None))
 }
 
 // -----------------------------------------------------------------------------
@@ -422,8 +511,12 @@ pub fn parse_action(input: &str) -> Result<Action, ParseError> {
 mod tests {
     use super::*;
 
+    fn parse(input: &str) -> Result<Action, ParseError> {
+        parse_action(input, None)
+    }
+
     fn assert_unique(action: Action, input: &str) {
-        match parse_action(input) {
+        match parse(input) {
             Ok(a) => assert_eq!(a, action, "input={input}"),
             Err(e) => panic!("expected Ok({action:?}) for '{input}', got {e:?}"),
         }
@@ -435,6 +528,8 @@ mod tests {
         assert_unique(Action::Help, "help");
         assert_unique(Action::Clear, "cle");
         assert_unique(Action::Exit, "e");
+        assert_unique(Action::Start, "start");
+        assert_unique(Action::Stop, "stop");
     }
 
     #[test]
@@ -451,14 +546,14 @@ mod tests {
 
     #[test]
     fn ambiguous_sub() {
-        match parse_action("plan o") {
+        match parse("plan o") {
             Err(ParseError::AmbiguousArg(cmd, list)) => {
                 assert_eq!(cmd.name, "plan");
                 assert_eq!(list, vec!["on", "off"]);
             }
             other => panic!("expected AmbiguousArg, got {other:?}"),
         }
-        match parse_action("demo c") {
+        match parse("demo c") {
             Err(ParseError::AmbiguousArg(cmd, list)) => {
                 assert_eq!(cmd.name, "demo");
                 assert_eq!(list, vec!["chat", "code"]);
@@ -469,7 +564,7 @@ mod tests {
 
     #[test]
     fn missing_arg_lists_options() {
-        match parse_action("plan") {
+        match parse("plan") {
             Err(ParseError::MissingArg(cmd)) => {
                 assert_eq!(cmd.name, "plan");
                 let opts: Vec<&str> = cmd.subs.iter().map(|s| s.name).collect();
@@ -481,7 +576,7 @@ mod tests {
 
     #[test]
     fn ambiguous_command() {
-        match parse_action("xy") {
+        match parse("xy") {
             Err(ParseError::UnknownCommand(s)) => assert_eq!(s, "xy"),
             other => panic!("expected UnknownCommand, got {other:?}"),
         }
@@ -489,7 +584,7 @@ mod tests {
 
     #[test]
     fn unexpected_arg_for_no_arg_command() {
-        match parse_action("help me") {
+        match parse("help me") {
             Err(ParseError::UnexpectedArg(cmd, extra)) => {
                 assert_eq!(cmd.name, "help");
                 assert_eq!(extra, "me");
@@ -500,7 +595,7 @@ mod tests {
 
     #[test]
     fn unknown_sub_lists_options() {
-        match parse_action("plan zzz") {
+        match parse("plan zzz") {
             Err(ParseError::UnknownArg(cmd, s)) => {
                 assert_eq!(cmd.name, "plan");
                 assert_eq!(s, "zzz");
@@ -548,6 +643,23 @@ mod tests {
     }
 
     #[test]
+    fn task_filter_blocks_disallowed_commands() {
+        // model/demo/plan are not allowed in conn tab
+        let err = parse_action("model claude", Some("conn")).unwrap_err();
+        assert!(matches!(err, ParseError::CommandNotAllowed(_, _)));
+        // con is allowed in conn tab
+        assert!(parse_action("con zmq", Some("conn")).is_ok());
+        // start/stop are allowed in demo tab, con is not
+        assert!(parse_action("start", Some("demo")).is_ok());
+        assert!(parse_action("stop", Some("demo")).is_ok());
+        let err = parse_action("con tcp", Some("demo")).unwrap_err();
+        assert!(matches!(err, ParseError::CommandNotAllowed(_, _)));
+        // all commands allowed in main
+        assert!(parse_action("model claude", Some("main")).is_ok());
+        assert!(parse_action("demo chat", Some("main")).is_ok());
+    }
+
+    #[test]
     fn lcp_basic() {
         assert_eq!(longest_common_prefix(&["chat", "code"]), "c");
         assert_eq!(longest_common_prefix(&["on", "off"]), "o");
@@ -563,9 +675,9 @@ mod tests {
         for spec in COMMANDS {
             if spec.subs.is_empty() {
                 let input = spec.name;
-                let action = parse_action(input)
+                let action = parse_action(input, None)
                     .unwrap_or_else(|e| panic!("'{input}' should parse: {e}"));
-                let expected = (spec.build)(None);
+                let expected = (spec.build)(None, None);
                 assert_eq!(
                     action, expected,
                     "build({}, None) must match parse_action result",
@@ -574,9 +686,11 @@ mod tests {
             } else {
                 for sub in spec.subs {
                     let input = format!("{} {}", spec.name, sub.name);
-                    let action = parse_action(&input)
+                    let action = parse_action(&input, None)
                         .unwrap_or_else(|e| panic!("'{input}' should parse: {e}"));
-                    let expected = (spec.build)(Some(sub.name));
+                    // For sub_takes_value commands, build is called with None
+                    // value when only the sub is provided.
+                    let expected = (spec.build)(Some(sub.name), None);
                     assert_eq!(
                         action, expected,
                         "build({}, Some({})) must match parse_action result",

@@ -130,8 +130,9 @@ impl Frontend {
     }
 
     pub fn menu_items(&self) -> Vec<(&'static str, &'static str)> {
+        let task = Some(self.view.active_task.as_str());
         match commands::completion_ctx(&self.current_text()) {
-            CompletionCtx::Command { prefix } => commands::matching_commands(&prefix),
+            CompletionCtx::Command { prefix } => commands::matching_commands(&prefix, task),
             CompletionCtx::Sub { cmd, prefix } => commands::matching_subs(cmd, &prefix),
             CompletionCtx::None => Vec::new(),
         }
@@ -151,7 +152,7 @@ impl Frontend {
         if trimmed.is_empty() {
             return InputState::Empty;
         }
-        match commands::parse_action(trimmed) {
+        match commands::parse_action(trimmed, Some(&self.view.active_task)) {
             Ok(_) => InputState::Resolvable,
             Err(ParseError::MissingArg(_)) => InputState::MissingArg,
             Err(ParseError::AmbiguousCommand(_)) | Err(ParseError::AmbiguousArg(_, _)) => {
@@ -163,6 +164,28 @@ impl Frontend {
 
     fn send(&self, cmd: Command) {
         let _ = self.cmd_tx.try_send(cmd);
+    }
+
+    fn tab_next(&mut self) {
+        if self.view.tasks.len() <= 1 {
+            return;
+        }
+        let next = (self.view.active_task_index + 1) % self.view.tasks.len();
+        let name = self.view.tasks[next].name.clone();
+        self.send(Command::Run(Action::TaskSwitch(name)));
+    }
+
+    fn tab_prev(&mut self) {
+        if self.view.tasks.len() <= 1 {
+            return;
+        }
+        let prev = if self.view.active_task_index == 0 {
+            self.view.tasks.len() - 1
+        } else {
+            self.view.active_task_index - 1
+        };
+        let name = self.view.tasks[prev].name.clone();
+        self.send(Command::Run(Action::TaskSwitch(name)));
     }
 
     fn on_key(&mut self, key: KeyEvent) {
@@ -251,6 +274,26 @@ impl Frontend {
             }
             (KeyCode::Char('s'), KeyModifiers::CONTROL) => {
                 self.panel_visible = !self.panel_visible;
+                return;
+            }
+            (KeyCode::Left, _) => {
+                if self.input.lines().iter().all(|l| l.is_empty()) {
+                    self.tab_prev();
+                    return;
+                }
+            }
+            (KeyCode::Right, _) => {
+                if self.input.lines().iter().all(|l| l.is_empty()) {
+                    self.tab_next();
+                    return;
+                }
+            }
+            (KeyCode::Tab, KeyModifiers::CONTROL) => {
+                self.tab_next();
+                return;
+            }
+            (KeyCode::BackTab, _) => {
+                self.tab_prev();
                 return;
             }
             _ => {}
@@ -479,7 +522,7 @@ impl Frontend {
             }
         }
 
-        match commands::parse_action(&text) {
+        match commands::parse_action(&text, Some(&self.view.active_task)) {
             Ok(action) => {
                 self.replace_input("");
                 self.send(Command::Run(action));

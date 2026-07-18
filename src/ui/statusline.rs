@@ -41,9 +41,20 @@ pub fn render(f: &mut Frame, area: Rect, view: &ViewState) {
             (format!(" net: ✕ {trimmed} "), Color::Red)
         }
     };
-    let conn = Span::styled(
-        conn_text,
-        Style::default().bg(conn_bg).fg(Color::Black),
+    let conn = Span::styled(conn_text, Style::default().bg(conn_bg).fg(Color::Black));
+
+    // Show current task name and total count.
+    let task_label = Span::styled(
+        format!(
+            " {} ({}/{}) ",
+            view.active_task,
+            view.active_task_index + 1,
+            view.tasks.len()
+        ),
+        Style::default()
+            .bg(Color::Cyan)
+            .fg(Color::Black)
+            .add_modifier(Modifier::BOLD),
     );
 
     let middle_text = if view.streaming {
@@ -63,11 +74,11 @@ pub fn render(f: &mut Frame, area: Rect, view: &ViewState) {
     );
 
     let hint = Span::styled(
-        " ⏎ send  /  cmd  ^C exit ",
+        " ⏎ send  /  cmd  ^C exit  ←→ switch tab ",
         Style::default().fg(Color::DarkGray),
     );
 
-    let left_line = Line::from(vec![mode_text, model, conn, middle]);
+    let left_line = Line::from(vec![mode_text, model, task_label, conn, middle]);
     let right_line = Line::from(hint);
 
     let left = Paragraph::new(left_line);

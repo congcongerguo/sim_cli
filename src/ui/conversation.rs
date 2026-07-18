@@ -74,14 +74,18 @@ pub fn render(
         Mode::Plan => "plan",
     };
 
-    let title = format!(" sim_cli · {} · {} ", view.model, mode_label);
+    let border_color = task_border_color(&view.active_task);
+    let title = format!(
+        " {} · {} · {} ",
+        view.active_task, view.model, mode_label
+    );
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(Color::DarkGray))
+        .border_style(Style::default().fg(border_color))
         .title(Span::styled(
             title,
             Style::default()
-                .fg(Color::Cyan)
+                .fg(border_color)
                 .add_modifier(Modifier::BOLD),
         ));
 
@@ -90,9 +94,6 @@ pub fn render(
     let visible = inner.height;
 
     // Auto-adjust scroll when new content arrives while user is scrolled up.
-    // `scroll` is "lines away from bottom", so when the bottom moves further
-    // down (more content), scroll must increase by the same amount to keep
-    // the view anchored at the same content.
     if !follow_tail {
         let prev = prev_total_lines.get();
         if total_lines > prev {
@@ -127,8 +128,17 @@ pub fn render(
         };
         let p = Paragraph::new(Span::styled(
             hint,
-            Style::default().fg(Color::Black).bg(Color::Yellow),
+            Style::default().bg(Color::Yellow).fg(Color::Black),
         ));
         f.render_widget(p, hint_area);
+    }
+}
+
+fn task_border_color(task_name: &str) -> Color {
+    match task_name {
+        "main" => Color::Cyan,
+        "conn" => Color::Green,
+        "demo" => Color::Yellow,
+        _ => Color::DarkGray,
     }
 }
