@@ -33,6 +33,7 @@ pub struct RenderState {
     pub follow_tail: bool,
     #[allow(dead_code)]
     pub prev_total_lines: u16,
+    pub unseen_lines: u16,
     pub panel_visible: bool,
     pub modal_request: Option<ModalRequest>,
     pub modal_selected: usize,

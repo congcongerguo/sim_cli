@@ -78,9 +78,13 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState, visible: u
     f.render_widget(para, area);
 
     if !state.follow_tail && total_lines > visible {
-        let hint = " ▲ scrolled — PgDn to follow ";
-        let hint_x = area.x + area.width.saturating_sub(hint.len() as u16 + 2);
-        let hint_area = Rect { x: hint_x, y: area.y, width: hint.len() as u16, height: 1 };
+        let hint = if state.unseen_lines > 0 {
+            format!(" ▼ {} new — PgDn to follow ", state.unseen_lines)
+        } else {
+            " ▲ scrolled — PgDn to follow ".to_string()
+        };
+        let hint_y = area.y + area.height.saturating_sub(1);
+        let hint_area = Rect { x: area.x, y: hint_y, width: hint.len() as u16, height: 1 };
         let p = Paragraph::new(Span::styled(hint, Style::default().bg(Color::Yellow).fg(Color::Black)));
         f.render_widget(p, hint_area);
     }

@@ -36,7 +36,7 @@ enum CompletionCtx {
 pub struct Frontend {
     pub input: TextArea<'static>,
     pub(crate) scroll: Cell<u16>,
-    pub(crate) follow_tail: bool,
+    pub(crate) follow_tail: Cell<bool>,
     pub(crate) menu_idx: usize,
     pub(crate) tab_cycle: Option<TabCycle>,
     #[allow(dead_code)]
@@ -50,6 +50,10 @@ pub struct Frontend {
     history_cursor: Option<usize>,
     pub(crate) viewport_height: Cell<u16>,
     pub(crate) prev_total_lines: Cell<u16>,
+    /// Lines added since user scrolled up (0 = following or content fits).
+    unseen_lines: Cell<u16>,
+    /// Total lines the last time we were in follow mode.
+    total_at_follow: Cell<u16>,
 }
 
 impl Frontend {
@@ -61,7 +65,7 @@ impl Frontend {
         Self {
             input,
             scroll: Cell::new(0),
-            follow_tail: true,
+            follow_tail: Cell::new(true),
             menu_idx: 0,
             tab_cycle: None,
             demo_idx: 0,
@@ -74,6 +78,8 @@ impl Frontend {
             history_cursor: None,
             viewport_height: Cell::new(20),
             prev_total_lines: Cell::new(0),
+            unseen_lines: Cell::new(0),
+            total_at_follow: Cell::new(0),
         }
     }
 
@@ -98,8 +104,9 @@ impl Frontend {
             menu_idx: self.menu_idx,
             menu_title: self.menu_title(),
             scroll_offset: self.scroll.get(),
-            follow_tail: self.follow_tail,
+            follow_tail: self.follow_tail.get(),
             prev_total_lines: self.prev_total_lines.get(),
+            unseen_lines: self.unseen_lines.get(),
             panel_visible: self.panel_visible,
             modal_request: self.view.modal.clone(),
             modal_selected: self.modal_selected,
@@ -107,6 +114,21 @@ impl Frontend {
     }
 
     fn apply_output(&self, out: &crate::ui::render_state::RenderOutput) {
+        // If content fits on one screen, always follow (scroll not needed).
+        if out.total_lines <= out.viewport_height {
+            self.follow_tail.set(true);
+            self.scroll.set(0);
+            self.unseen_lines.set(0);
+            self.total_at_follow.set(out.total_lines);
+        } else if self.follow_tail.get() {
+            // In follow mode: no unseen lines, track current total.
+            self.unseen_lines.set(0);
+            self.total_at_follow.set(out.total_lines);
+        } else {
+            // Detached mode: count how many lines have been added since.
+            let unseen = out.total_lines.saturating_sub(self.total_at_follow.get());
+            self.unseen_lines.set(unseen);
+        }
         self.viewport_height.set(out.viewport_height);
         self.prev_total_lines.set(out.total_lines);
     }
@@ -310,26 +332,26 @@ impl Frontend {
                 let step = self.viewport_height.get().max(1);
                 let max = self.prev_total_lines.get().saturating_sub(self.viewport_height.get().max(1));
                 self.scroll.set(self.scroll.get().saturating_add(step).min(max));
-                self.follow_tail = false;
+                self.follow_tail.set(false);
                 return;
             }
             (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
                 let step = self.viewport_height.get().max(1);
                 self.scroll.set(self.scroll.get().saturating_sub(step));
                 if self.scroll.get() == 0 {
-                    self.follow_tail = true;
+                    self.follow_tail.set(true);
                 }
                 return;
             }
             (KeyCode::Home, _) => {
                 let max = self.prev_total_lines.get().saturating_sub(self.viewport_height.get().max(1));
                 self.scroll.set(max);
-                self.follow_tail = false;
+                self.follow_tail.set(false);
                 return;
             }
             (KeyCode::End, _) => {
                 self.scroll.set(0);
-                self.follow_tail = true;
+                self.follow_tail.set(true);
                 return;
             }
             (KeyCode::Char('g'), KeyModifiers::CONTROL) => {
@@ -573,7 +595,7 @@ impl Frontend {
     fn submit(&mut self, text: String) {
         self.tab_cycle = None;
         self.menu_idx = 0;
-        self.follow_tail = true;
+        self.follow_tail.set(true);
         self.scroll.set(0);
         self.history_cursor = None;
 
@@ -601,7 +623,7 @@ impl Frontend {
         self.replace_input("");
         self.tab_cycle = None;
         self.menu_idx = 0;
-        self.follow_tail = true;
+        self.follow_tail.set(true);
         self.scroll.set(0);
         self.send(Command::Input(text.to_string()));
     }
