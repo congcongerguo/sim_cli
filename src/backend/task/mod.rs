@@ -47,6 +47,7 @@ pub struct TaskSnapshot {
     pub name: String,
     pub messages: Arc<Vec<Message>>,
     pub evicted_lines: u64,
+    pub buffer_total_lines: u64,
     pub model: String,
     pub conn: ConnState,
     #[allow(dead_code)]

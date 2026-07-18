@@ -7,24 +7,43 @@ use crate::message::Message;
 
 pub const DEFAULT_MAX: usize = 10_000;
 
+/// How many render lines a message produces.
+pub fn msg_line_count(msg: &Message) -> u64 {
+    match msg {
+        Message::Assistant { text, streaming } => {
+            let n = text.lines().count() as u64;
+            if *streaming { n + 1 } else { n }  // +1 for cursor
+        }
+        Message::Tool(_t) => 4, // title + status + args + output
+        Message::System { text, .. } => {
+            text.lines().count() as u64 + 1  // +1 for blank separator
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct LogBuffer {
     messages: VecDeque<Message>,
     max_entries: usize,
     total_evicted: u64,
+    total_lines: u64,
 }
 
 impl LogBuffer {
     pub fn new(max_entries: usize) -> Self {
-        Self { messages: VecDeque::new(), max_entries, total_evicted: 0 }
+        Self { messages: VecDeque::new(), max_entries, total_evicted: 0, total_lines: 0 }
     }
 
     /// Add a message. If over capacity, evicts oldest.
     pub fn push(&mut self, msg: Message) {
+        let added = msg_line_count(&msg);
         self.messages.push_back(msg);
+        self.total_lines += added;
         while self.messages.len() > self.max_entries {
-            self.messages.pop_front();
-            self.total_evicted += 1;
+            if let Some(old) = self.messages.pop_front() {
+                self.total_lines -= msg_line_count(&old);
+                self.total_evicted += 1;
+            }
         }
     }
 
@@ -38,14 +57,20 @@ impl LogBuffer {
         self.messages.is_empty()
     }
 
-    /// Clear all messages. Does NOT reset the eviction counter (scroll anchor).
+    /// Clear all messages. Keeps eviction counter.
     pub fn clear(&mut self) {
+        self.total_lines = 0;
         self.messages.clear();
     }
 
     /// Cumulative count of entries evicted since creation.
     pub fn evicted(&self) -> u64 {
         self.total_evicted
+    }
+
+    /// Total render lines (maintained incrementally — O(1)).
+    pub fn total_lines(&self) -> u64 {
+        self.total_lines
     }
 
     /// Iterate messages from oldest to newest.
@@ -190,6 +215,28 @@ mod tests {
         buf.push(msg("world"));
         let snap = buf.to_vec();
         assert_eq!(snap.len(), 2);
+    }
+
+    #[test]
+    fn total_lines_increments_and_decrements() {
+        let mut buf = LogBuffer::new(10);
+        // Single-line system messages: each = 2 lines (text + blank separator)
+        buf.push(msg("a")); // 2 lines
+        buf.push(msg("b")); // 2 lines
+        assert_eq!(buf.total_lines(), 4);
+        buf.clear();
+        assert_eq!(buf.total_lines(), 0);
+    }
+
+    #[test]
+    fn total_lines_drops_on_eviction() {
+        let mut buf = LogBuffer::new(2);
+        buf.push(msg("a")); // +2
+        buf.push(msg("b")); // +2 -> total 4
+        assert_eq!(buf.total_lines(), 4);
+        buf.push(msg("c")); // +2, evicts "a" (-2) -> total 4
+        assert_eq!(buf.total_lines(), 4);
+        assert_eq!(buf.evicted(), 1);
     }
 
     #[test]

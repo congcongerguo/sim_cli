@@ -35,6 +35,7 @@ pub struct RenderState {
     pub prev_total_lines: u16,
     pub unseen_lines: u16,
     pub evicted_lines: u64,
+    pub buffer_total_lines: u64,
     pub panel_visible: bool,
     pub modal_request: Option<ModalRequest>,
     pub modal_selected: usize,

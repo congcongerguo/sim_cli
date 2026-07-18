@@ -52,7 +52,8 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState, visible: u
         all.pop();
     }
 
-    let total_lines = all.len() as u16;
+    // Use pre-computed total from LogBuffer (O(1)) instead of all.len().
+    let total_lines = state.buffer_total_lines as u16;
     let mode_label = match state.mode {
         Mode::Normal => "normal",
         Mode::Plan => "plan",

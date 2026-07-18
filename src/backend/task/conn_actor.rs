@@ -82,6 +82,7 @@ impl TaskActor for ConnTask {
             name: self.def.name.into(),
             messages: self.chat.messages.to_arc(),
             evicted_lines: self.chat.messages.evicted(),
+            buffer_total_lines: self.chat.messages.total_lines(),
             model: self.chat.model.clone(),
             conn: self.conn.conn.clone(),
             demo_running: false,
