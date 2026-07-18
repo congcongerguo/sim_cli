@@ -141,10 +141,7 @@ fn log_level_color(level: LogLevel) -> Color {
 }
 
 fn task_border_color(task_name: &str) -> Color {
-    match task_name {
-        "main" => Color::Cyan,
-        "conn" => Color::Green,
-        "demo" => Color::Yellow,
-        _ => Color::DarkGray,
-    }
+    crate::backend::TaskDef::find(task_name)
+        .map(|d| Color::Rgb(d.border_color.0, d.border_color.1, d.border_color.2))
+        .unwrap_or(Color::DarkGray)
 }

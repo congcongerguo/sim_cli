@@ -1,0 +1,20 @@
+# Task tab definitions. Add a [[task]] block to create a new tab.
+# commands = [] means all commands are allowed.
+
+[[task]]
+name = "main"
+hint = "general       —  model / plan / demo"
+commands = []
+border_color = [0, 255, 255]
+
+[[task]]
+name = "conn"
+hint = "transport     —  con zmq|tcp / close / send"
+commands = ["help", "clear", "exit", "con", "close", "send"]
+border_color = [0, 255, 0]
+
+[[task]]
+name = "demo"
+hint = "log demo      —  start / stop"
+commands = ["help", "clear", "exit", "start", "stop"]
+border_color = [255, 255, 0]
