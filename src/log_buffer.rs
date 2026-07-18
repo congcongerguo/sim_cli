@@ -1,30 +1,29 @@
-//! Ring buffer for chat messages. Evicts oldest entries when full.
+//! 消息环形缓冲区。满时淘汰最旧条目。
 //!
-//! # Counters (all incremental, O(1) per push)
+//! # 计数器（全部增量维护，每次 push O(1)）
 //!
-//! | Field | Meaning | Used for |
+//! | 字段 | 含义 | 用途 |
 //! |---|---|---|
-//! | `total_lines` | current render line count | `buffer_total_lines` → scroll math |
-//! | `evicted_lines` | cumulative render lines evicted | scroll coordinate correction |
-//! | `total_evicted` | cumulative message count evicted | diagnostics only |
+//! | `total_lines` | 当前渲染行数 | `buffer_total_lines` → 翻滚计算 |
+//! | `evicted_lines` | 累计淘汰的渲染行数 | 翻滚坐标修正 |
+//! | `total_evicted` | 累计淘汰的消息条数 | 仅诊断 |
 //!
-//! `msg_line_count()` is called at `push()` time and on each eviction.
-//! The counts stay accurate as long as messages are not mutated in-place.
-//! (Currently only System messages are used in production; Tool/Assistant
-//! are gated behind the `mock-llm` feature.)
+//! `msg_line_count()` 在 push 时和淘汰时各调一次。只要消息不被原地修改，
+//! 计数就保持准确。（生产环境只使用 System 消息；Tool/Assistant 在
+//! `mock-llm` feature 后面，默认关闭。）
 //!
-//! # Scroll coordinate correction
+//! # 翻滚坐标修正
 //!
 //! ```text
-//!   buffer before:  [old₀] [old₁] [cur₀] [cur₁] [cur₂]
+//!   淘汰前:  [旧₀] [旧₁] [当前₀] [当前₁] [当前₂]
 //!   evicted_lines = 0
 //!
-//!   push(new) → evict old₀:
-//!   buffer after:   [old₁] [cur₀] [cur₁] [cur₂] [new]
-//!   evicted_lines = msg_line_count(old₀)
+//!   push(新) → 淘汰 旧₀:
+//!   淘汰后:  [旧₁] [当前₀] [当前₁] [当前₂] [新]
+//!   evicted_lines = msg_line_count(旧₀)
 //!
-//!   User's scroll offset stays the same absolute value.
-//!   Render subtracts evicted_lines → shows same visual position.
+//!   用户翻滚的 offset 保持同一个绝对值。
+//!   渲染时减去 evicted_lines → 画面位置不变。
 //! ```
 
 use std::collections::VecDeque;

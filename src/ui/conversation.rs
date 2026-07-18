@@ -49,7 +49,7 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState, visible: u
         all.pop();
     }
 
-    // total_lines from LogBuffer (O(1) incremental, not all.len()).
+    // total_lines 来自 LogBuffer 增量维护（O(1)），不是 all.len()
     let total_lines = state.buffer_total_lines as u16;
     let mode_label = match state.mode {
         Mode::Normal => "normal",
@@ -63,11 +63,11 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState, visible: u
         .border_style(Style::default().fg(border_color))
         .title(Span::styled(title, Style::default().fg(border_color).add_modifier(Modifier::BOLD)));
 
-    // Convert absolute scroll_offset → buffer-relative for ratatui.
-    //   offset  = absolute line # (from first message ever)
-    //   evicted = cumulative lines removed from buffer front
-    //   adjusted = offset - evicted = position within current buffer
-    // Saturating math: never negative, clamped to [0, max_scroll].
+    // 绝对行号 → 缓冲区内相对位置
+    //   offset  = 绝对行号（从第一条消息算起）
+    //   evicted = 累计淘汰行数
+    //   adjusted = offset - evicted = 当前缓冲区内位置
+    // 饱和运算保证不会出现负数，限制在 [0, max_scroll] 内
     let max_scroll = total_lines.saturating_sub(visible);
     let scroll = if state.follow_tail {
         max_scroll

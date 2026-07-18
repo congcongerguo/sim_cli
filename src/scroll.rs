@@ -1,58 +1,55 @@
-//! Scroll state machine — pure functions for PageUp/Down/Home/End.
+//! 翻滚状态机 —— PageUp/Down/Home/End 的纯函数实现。
+//! 从 frontend.rs 的按键处理中抽离，方便单独测试。
 //!
-//! # Coordinate system
+//! # 坐标系
 //!
-//! `offset` is an **absolute** line number counting from the very first
-//! message ever pushed.  Messages that have been evicted from the buffer
-//! still occupy their original absolute coordinates — the visible window
-//! starts at `evicted_lines`.
+//! `offset` 是**绝对行号**，从第一条消息开始计数。被淘汰的消息仍然
+//! 占据原来的绝对坐标 —— 可见窗口从 `evicted_lines` 开始。
 //!
 //! ```text
-//!   absolute line 0 ─── [evicted] ─── [buffer content] ─── [bottom]
-//!                      ╰── gone ──╯  ╰── total_lines ──╯
+//!   绝对行 0 ─── [已淘汰] ─── [缓冲区内容] ─── [底部]
+//!              ╰── 消失 ──╯  ╰─ total_lines ─╯
 //! ```
 //!
-//! The renderer converts `offset` to a buffer-relative position by
-//! subtracting `evicted_lines`.  This keeps the view anchored when old
-//! messages are evicted: the offset stays the same, the subtraction
-//! automatically shifts to the new buffer window.
+//! 渲染时将 `offset` 减去 `evicted_lines` 得到缓冲区内的相对位置。
+//! 这样淘汰旧消息时视图自动锚定：offset 不变，减法自动对齐新窗口。
 //!
-//! # Data flow
+//! # 数据流
 //!
 //! ```text
-//!   LogBuffer (incremental) → TaskSnapshot → ViewState → ScrollInput
-//!          total_lines ──────────┤                │
-//!          evicted_lines ────────┘                │
-//!                                                 ↓
-//!                                     frontend::scroll_input()
-//!                                                 ↓
-//!                               scroll::page_up / page_down / home / end
-//!                                                 ↓
-//!                               ScrollState { offset, follow_tail }
-//!                                                 ↓
-//!                               RenderState::scroll_offset ──→ conversation.rs
-//!                                                 │
-//!                               adjusted = offset - evicted_lines
-//!                                                 │
-//!                               ratatui Paragraph::scroll(adjusted)
+//!   LogBuffer (增量维护) → TaskSnapshot → ViewState → ScrollInput
+//!        total_lines ──────────┤                │
+//!        evicted_lines ────────┘                │
+//!                                               ↓
+//!                                  frontend::scroll_input()
+//!                                               ↓
+//!                              scroll::page_up/down/home/end
+//!                                               ↓
+//!                              ScrollState { offset, follow_tail }
+//!                                               ↓
+//!                              RenderState::scroll_offset ──→ conversation.rs
+//!                                               │
+//!                              adjusted = offset - evicted_lines
+//!                                               │
+//!                              ratatui Paragraph::scroll(adjusted)
 //! ```
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScrollState {
-    /// Absolute line number (from the first message ever).
-    /// Converted to buffer-relative in conversation.rs via `offset - evicted_lines`.
+    /// 绝对行号（从第一条消息开始算）。
+    /// 在 conversation.rs 中通过 `offset - evicted_lines` 转为缓冲区内位置。
     pub offset: u32,
-    /// When true, the view tracks the bottom of the buffer automatically.
+    /// true 时视图自动跟随缓冲区底部。
     pub follow_tail: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct ScrollInput {
-    /// Number of visible lines in the conversation area (viewport_height).
+    /// 对话区可见行数（viewport_height）。
     pub viewport: u16,
-    /// Total render lines in the buffer (LogBuffer::total_lines).
+    /// 缓冲区当前总行数（LogBuffer::total_lines）。
     pub total_lines: u64,
-    /// Cumulative evicted render lines (LogBuffer::evicted_lines).
+    /// 累计淘汰行数（LogBuffer::evicted_lines）。
     pub evicted_lines: u64,
 }
 
@@ -60,33 +57,37 @@ impl ScrollInput {
     fn viewport_u32(&self) -> u32 { self.viewport.max(1) as u32 }
     fn total_u32(&self) -> u32 { self.total_lines as u32 }
     fn evicted_u32(&self) -> u32 { self.evicted_lines as u32 }
+    /// 最大可滚动行数 = 总行数 - 可见行数。
     fn max_scroll(&self) -> u32 {
         self.total_u32().saturating_sub(self.viewport_u32())
     }
+    /// 每次翻页的步长 = 一屏的行数。
     fn step(&self) -> u32 { self.viewport_u32() }
+    /// 底部绝对行号 = 已淘汰行数 + 最大滚动量。
     fn bottom_abs(&self) -> u32 {
         self.evicted_u32().saturating_add(self.max_scroll())
     }
 }
 
-/// PageUp / Ctrl+B: scroll one page up.
+/// PageUp / Ctrl+B：向上翻一页，自动脱离跟尾模式。
 pub fn page_up(state: &ScrollState, input: &ScrollInput) -> ScrollState {
     let cur = if state.follow_tail {
+        // 从底部首次脱离：底部绝对位置 - 一页
         input.bottom_abs().saturating_sub(input.step())
     } else {
+        // 已脱离：继续上翻
         state.offset.saturating_sub(input.step())
     };
     ScrollState { offset: cur, follow_tail: false }
 }
 
-/// PageDown / Ctrl+F: scroll one page down. Returns to follow mode at bottom.
+/// PageDown / Ctrl+F：向下翻一页。到达底部时自动恢复跟尾模式。
 pub fn page_down(state: &ScrollState, input: &ScrollInput) -> ScrollState {
     if state.follow_tail {
-        return *state;
+        return *state; // 已在底部，无需操作
     }
     let cur = state.offset.saturating_add(input.step());
-    // Add 1-step slack so a tick arriving between key press and render
-    // doesn't keep us one line short of the bottom.
+    // 多留一页的余量：防止按键和渲染之间来了新 tick 导致差一行到不了底
     if cur + input.step() >= input.bottom_abs() {
         ScrollState { offset: 0, follow_tail: true }
     } else {
@@ -94,142 +95,85 @@ pub fn page_down(state: &ScrollState, input: &ScrollInput) -> ScrollState {
     }
 }
 
-/// Home: jump to the top of the current buffer window.
+/// Home：跳到当前缓冲区的最顶部（已淘汰行的下一行）。
 pub fn home(input: &ScrollInput) -> ScrollState {
     ScrollState { offset: input.evicted_u32(), follow_tail: false }
 }
 
-/// End: jump to the bottom and resume follow mode.
+/// End：跳到底部并恢复跟尾模式。
 pub fn end() -> ScrollState {
     ScrollState { offset: 0, follow_tail: true }
 }
 
 // ---------------------------------------------------------------------------
-// Tests
+// 测试
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// Helper: a full buffer of 100 lines, 20-line viewport, 500 lines evicted.
     fn full_buf() -> ScrollInput {
         ScrollInput { viewport: 20, total_lines: 100, evicted_lines: 500 }
     }
-
-    fn at_bottom() -> ScrollState {
-        ScrollState { offset: 0, follow_tail: true }
-    }
-
-    fn detached(offset: u32) -> ScrollState {
-        ScrollState { offset, follow_tail: false }
-    }
+    fn at_bottom() -> ScrollState { ScrollState { offset: 0, follow_tail: true } }
+    fn detached(o: u32) -> ScrollState { ScrollState { offset: o, follow_tail: false } }
 
     #[test]
-    fn page_up_from_bottom_detaches_one_page_up() {
-        let input = full_buf();
-        let result = page_up(&at_bottom(), &input);
-        assert!(!result.follow_tail);
-        // bottom_abs = 500+80=580, step=20, cur=560. Render: 560-500=60.
-        assert_eq!(result.offset, 560);
+    fn page_up_from_bottom_detaches() {
+        let r = page_up(&at_bottom(), &full_buf());
+        assert!(!r.follow_tail);
+        assert_eq!(r.offset, 560); // bottom_abs=580, step=20 → 560
     }
-
     #[test]
-    fn page_up_when_detached_goes_further_up() {
-        let input = full_buf();
-        let s = page_up(&detached(560), &input);
-        assert_eq!(s.offset, 540);
+    fn page_up_detached_goes_further() {
+        let r = page_up(&detached(560), &full_buf());
+        assert_eq!(r.offset, 540);
     }
-
     #[test]
-    fn page_up_cannot_go_below_zero() {
-        let input = full_buf();
-        let s = page_up(&detached(5), &input);
-        assert_eq!(s.offset, 0); // saturating_sub
+    fn page_up_saturates_at_zero() {
+        assert_eq!(page_up(&detached(5), &full_buf()).offset, 0);
     }
-
     #[test]
-    fn page_down_from_bottom_does_nothing() {
-        let input = full_buf();
-        let result = page_down(&at_bottom(), &input);
-        assert_eq!(result, at_bottom());
+    fn page_down_from_bottom_noop() {
+        assert_eq!(page_down(&at_bottom(), &full_buf()), at_bottom());
     }
-
     #[test]
-    fn page_down_from_detached_moves_down() {
-        let input = full_buf();
-        // offset=520, step=20 → cur=540, 540+20=560 < 580 → still detached
-        let s = page_down(&detached(520), &input);
-        assert!(!s.follow_tail);
-        assert_eq!(s.offset, 540);
+    fn page_down_from_middle() {
+        let r = page_down(&detached(520), &full_buf());
+        assert!(!r.follow_tail);
+        assert_eq!(r.offset, 540);
     }
-
     #[test]
-    fn page_down_reaches_bottom_resumes_follow() {
-        let input = full_buf();
-        // bottom_abs=580, slack: cur+20>=580 → cur>=560
-        let s = page_down(&detached(560), &input);
-        assert!(s.follow_tail);
-        assert_eq!(s.offset, 0);
+    fn page_down_reaches_bottom() {
+        let r = page_down(&detached(560), &full_buf());
+        assert!(r.follow_tail);
     }
-
     #[test]
-    fn page_down_with_slack_still_reaches_bottom() {
-        let input = full_buf();
-        // cur=540, cur+20=560, 560+20=580 >= 580 → follow
-        let s = page_down(&detached(540), &input);
-        assert!(s.follow_tail);
+    fn home_jumps_to_top() {
+        let r = home(&full_buf());
+        assert_eq!(r.offset, 500); // evicted_lines
+        assert!(!r.follow_tail);
     }
-
-    #[test]
-    fn home_jumps_to_top_of_buffer() {
-        let input = full_buf();
-        let s = home(&input);
-        assert!(!s.follow_tail);
-        assert_eq!(s.offset, 500); // evicted_lines
-    }
-
     #[test]
     fn end_jumps_to_bottom() {
         assert_eq!(end(), ScrollState { offset: 0, follow_tail: true });
     }
-
     #[test]
-    fn small_buffer_fits_on_screen() {
-        let input = ScrollInput { viewport: 20, total_lines: 5, evicted_lines: 0 };
-        // max_scroll = 0 (5 < 20)
-        assert_eq!(input.max_scroll(), 0);
-        assert_eq!(input.bottom_abs(), 0);
-        // PageUp from bottom: bottom_abs(0)-20=0
-        let s = page_up(&at_bottom(), &input);
-        assert_eq!(s.offset, 0);
+    fn small_buffer_no_scroll() {
+        let inp = ScrollInput { viewport: 20, total_lines: 5, evicted_lines: 0 };
+        assert_eq!(inp.max_scroll(), 0);
     }
-
     #[test]
-    fn empty_buffer() {
-        let input = ScrollInput { viewport: 20, total_lines: 0, evicted_lines: 0 };
-        assert_eq!(input.max_scroll(), 0);
-        let s = home(&input);
-        assert_eq!(s.offset, 0);
-        assert!(!s.follow_tail);
+    fn eviction_still_scrollable() {
+        let inp = ScrollInput { viewport: 20, total_lines: 100, evicted_lines: 1000 };
+        let r = page_down(&home(&inp), &inp);
+        assert_eq!(r.offset, 1020);
     }
-
     #[test]
-    fn eviction_in_progress_still_scrolls() {
-        // Buffer full, 1000 lines evicted, user at top
-        let input = ScrollInput { viewport: 20, total_lines: 100, evicted_lines: 1000 };
-        let s = home(&input);
-        assert_eq!(s.offset, 1000);
-        // PageDown from top
-        let s = page_down(&s, &input);
-        assert_eq!(s.offset, 1020);
-        assert!(!s.follow_tail);
-    }
-
-    #[test]
-    fn viewport_zero_clamps_to_one() {
-        let input = ScrollInput { viewport: 0, total_lines: 100, evicted_lines: 0 };
-        assert_eq!(input.viewport_u32(), 1);
-        assert_eq!(input.max_scroll(), 99);
+    fn viewport_zero_clamped() {
+        let inp = ScrollInput { viewport: 0, total_lines: 100, evicted_lines: 0 };
+        assert_eq!(inp.viewport_u32(), 1);
+        assert_eq!(inp.max_scroll(), 99);
     }
 }
