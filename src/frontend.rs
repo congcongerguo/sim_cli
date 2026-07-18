@@ -324,22 +324,40 @@ impl Frontend {
             }
             (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {
                 let step = self.viewport_height.get().max(1);
-                let max = self.prev_total_lines.get().saturating_sub(self.viewport_height.get().max(1));
-                self.scroll.set(self.scroll.get().saturating_add(step).min(max));
+                let max_scroll = self.prev_total_lines.get()
+                    .saturating_sub(self.viewport_height.get().max(1));
+                let cur = if self.follow_tail.get() {
+                    // First detach from bottom: start one page up from the end.
+                    max_scroll.saturating_sub(step)
+                } else {
+                    // Already detached: go further up.
+                    self.scroll.get().saturating_sub(step)
+                };
+                self.scroll.set(cur);
                 self.follow_tail.set(false);
                 return;
             }
             (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
                 let step = self.viewport_height.get().max(1);
-                self.scroll.set(self.scroll.get().saturating_sub(step));
-                if self.scroll.get() == 0 {
+                let max_scroll = self.prev_total_lines.get()
+                    .saturating_sub(self.viewport_height.get().max(1));
+                let cur = if self.follow_tail.get() {
+                    // At bottom, scrolling down does nothing.
+                    return;
+                } else {
+                    self.scroll.get().saturating_add(step)
+                };
+                if cur >= max_scroll {
+                    // Reached the bottom: switch to follow mode.
                     self.follow_tail.set(true);
+                    self.scroll.set(0);
+                } else {
+                    self.scroll.set(cur);
                 }
                 return;
             }
             (KeyCode::Home, _) => {
-                let max = self.prev_total_lines.get().saturating_sub(self.viewport_height.get().max(1));
-                self.scroll.set(max);
+                self.scroll.set(0);
                 self.follow_tail.set(false);
                 return;
             }

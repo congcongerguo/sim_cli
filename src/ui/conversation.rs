@@ -65,13 +65,13 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState, visible: u
         .border_style(Style::default().fg(border_color))
         .title(Span::styled(title, Style::default().fg(border_color).add_modifier(Modifier::BOLD)));
 
-    let _inner = block.inner(area);
     let max_scroll = total_lines.saturating_sub(visible);
     let scroll = if state.follow_tail {
         max_scroll
     } else {
-        let cur = state.scroll_offset;
-        max_scroll.saturating_sub(cur)
+        // Detached: scroll_offset is an absolute line number from the top.
+        // Clamp so it stays valid even if content shrinks.
+        state.scroll_offset.min(max_scroll)
     };
 
     let para = Paragraph::new(all).block(block).wrap(Wrap { trim: false }).scroll((scroll, 0));
