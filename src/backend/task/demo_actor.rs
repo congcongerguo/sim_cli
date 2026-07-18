@@ -1,4 +1,3 @@
-use chrono::Local;
 use crate::message::{LogLevel, Message};
 
 use super::super::chat::ChatState;
@@ -9,11 +8,12 @@ pub struct DemoTask {
     chat: ChatState,
     def: &'static TaskDef,
     running: bool,
+    counter: u64,
 }
 
 impl DemoTask {
     pub fn new(model: String, def: &'static TaskDef) -> Self {
-        Self { chat: ChatState::new(model), def, running: false }
+        Self { chat: ChatState::new(model), def, running: false, counter: 0 }
     }
 }
 
@@ -49,8 +49,9 @@ impl TaskActor for DemoTask {
 
     fn tick(&mut self) -> Vec<Message> {
         if self.running {
-            let ts = Local::now().format("%H:%M:%S").to_string();
-            vec![Message::System { text: format!("[demo tick {ts}]"), level: LogLevel::Debug }]
+            let n = self.counter;
+            self.counter += 1;
+            vec![Message::System { text: format!("{n}"), level: LogLevel::Debug }]
         } else {
             vec![]
         }
