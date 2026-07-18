@@ -284,6 +284,14 @@ impl Frontend {
         }
     }
 
+    fn scroll_input(&self) -> crate::scroll::ScrollInput {
+        crate::scroll::ScrollInput {
+            viewport: self.viewport_height.get(),
+            total_lines: self.view.buffer_total_lines,
+            evicted_lines: self.view.evicted_lines,
+        }
+    }
+
     fn send(&self, cmd: Command) {
         let _ = self.cmd_tx.try_send(cmd);
     }
@@ -324,48 +332,38 @@ impl Frontend {
                 return;
             }
             (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {
-                let step = self.viewport_height.get().max(1) as u32;
-                let total = self.view.buffer_total_lines as u32;
-                let max_scroll = total.saturating_sub(self.viewport_height.get().max(1) as u32);
-                let cur = if self.follow_tail.get() {
-                    let evicted = self.view.evicted_lines as u32;
-                    let bottom_abs = evicted.saturating_add(max_scroll);
-                    bottom_abs.saturating_sub(step)
-                } else {
-                    self.scroll.get().saturating_sub(step)
+                let input = self.scroll_input();
+                let state = crate::scroll::ScrollState {
+                    offset: self.scroll.get(),
+                    follow_tail: self.follow_tail.get(),
                 };
-                self.scroll.set(cur);
-                self.follow_tail.set(false);
+                let result = crate::scroll::page_up(&state, &input);
+                self.scroll.set(result.offset);
+                self.follow_tail.set(result.follow_tail);
                 return;
             }
             (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
-                let step = self.viewport_height.get().max(1) as u32;
-                let total = self.view.buffer_total_lines as u32;
-                let max_scroll = total.saturating_sub(self.viewport_height.get().max(1) as u32);
-                if self.follow_tail.get() {
-                    return;
-                }
-                let cur = self.scroll.get().saturating_add(step);
-                let evicted = self.view.evicted_lines as u32;
-                let bottom_abs = evicted.saturating_add(max_scroll);
-                // Use a slack of 1 step so a tick arriving between key press
-                // and render doesn't keep us one line short of the bottom.
-                if cur + step >= bottom_abs {
-                    self.follow_tail.set(true);
-                    self.scroll.set(0);
-                } else {
-                    self.scroll.set(cur);
-                }
+                let input = self.scroll_input();
+                let state = crate::scroll::ScrollState {
+                    offset: self.scroll.get(),
+                    follow_tail: self.follow_tail.get(),
+                };
+                let result = crate::scroll::page_down(&state, &input);
+                self.scroll.set(result.offset);
+                self.follow_tail.set(result.follow_tail);
                 return;
             }
             (KeyCode::Home, _) => {
-                self.scroll.set(self.view.evicted_lines as u32);
-                self.follow_tail.set(false);
+                let input = self.scroll_input();
+                let result = crate::scroll::home(&input);
+                self.scroll.set(result.offset);
+                self.follow_tail.set(result.follow_tail);
                 return;
             }
             (KeyCode::End, _) => {
-                self.scroll.set(0);
-                self.follow_tail.set(true);
+                let result = crate::scroll::end();
+                self.scroll.set(result.offset);
+                self.follow_tail.set(result.follow_tail);
                 return;
             }
             (KeyCode::Char('g'), KeyModifiers::CONTROL) => {

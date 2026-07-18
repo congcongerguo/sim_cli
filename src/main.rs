@@ -3,6 +3,7 @@ mod event;
 mod frontend;
 mod json_framer;
 mod log_buffer;
+mod scroll;
 mod message;
 #[cfg(feature = "mock-llm")]
 mod mock_llm;
