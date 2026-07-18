@@ -69,9 +69,10 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState, visible: u
     let scroll = if state.follow_tail {
         max_scroll
     } else {
-        // Detached: scroll_offset is an absolute line number from the top.
-        // Clamp so it stays valid even if content shrinks.
-        state.scroll_offset.min(max_scroll)
+        // Detached: scroll_offset is absolute line number. Subtract evicted
+        // lines so it maps to the current buffer window.
+        let adjusted = state.scroll_offset.saturating_sub(state.evicted_lines as u16);
+        adjusted.min(max_scroll)
     };
 
     let para = Paragraph::new(all).block(block).wrap(Wrap { trim: false }).scroll((scroll, 0));

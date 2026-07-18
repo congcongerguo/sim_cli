@@ -107,6 +107,7 @@ impl Frontend {
             follow_tail: self.follow_tail.get(),
             prev_total_lines: self.prev_total_lines.get(),
             unseen_lines: self.unseen_lines.get(),
+            evicted_lines: self.view.evicted_lines,
             panel_visible: self.panel_visible,
             modal_request: self.view.modal.clone(),
             modal_selected: self.modal_selected,

@@ -38,6 +38,7 @@ pub struct ViewState {
     pub active_task: String,
     pub active_task_index: usize,
     pub active_commands: Arc<Vec<task::CommandDef>>,
+    pub evicted_lines: u64,
 }
 
 impl ViewState {
@@ -66,6 +67,7 @@ impl ViewState {
             tasks: Arc::new(tasks),
             active_task: first_name, active_task_index: 0,
             active_commands: Arc::new(vec![]),
+            evicted_lines: 0,
         }
     }
 }
@@ -126,6 +128,7 @@ impl Router {
             active_task: snap.name.clone(),
             active_task_index: self.active,
             active_commands: active_rt.commands.clone(),
+            evicted_lines: snap.evicted_lines,
         }
     }
 }

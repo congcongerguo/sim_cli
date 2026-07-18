@@ -80,7 +80,8 @@ impl TaskActor for ConnTask {
     fn snapshot(&self) -> TaskSnapshot {
         TaskSnapshot {
             name: self.def.name.into(),
-            messages: self.chat.messages.clone(),
+            messages: self.chat.messages.to_vec(),
+            evicted_lines: self.chat.messages.evicted(),
             model: self.chat.model.clone(),
             conn: self.conn.conn.clone(),
             demo_running: false,

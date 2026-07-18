@@ -59,7 +59,8 @@ impl TaskActor for DemoTask {
     fn snapshot(&self) -> TaskSnapshot {
         TaskSnapshot {
             name: self.def.name.into(),
-            messages: self.chat.messages.clone(),
+            messages: self.chat.messages.to_vec(),
+            evicted_lines: self.chat.messages.evicted(),
             model: self.chat.model.clone(),
             conn: crate::backend::ConnState::Disconnected,
             demo_running: self.running,

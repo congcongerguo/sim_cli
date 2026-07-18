@@ -1,3 +1,4 @@
+use crate::log_buffer::LogBuffer;
 use crate::message::{LogLevel, Message};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6,9 +7,9 @@ pub enum Mode {
     Plan,
 }
 
-/// Conversation log.
+/// Per-task conversation log backed by a bounded ring buffer.
 pub struct ChatState {
-    pub(crate) messages: Vec<Message>,
+    pub(crate) messages: LogBuffer,
     pub(crate) model: String,
     #[allow(dead_code)]
     pub(crate) mode: Mode,
@@ -16,7 +17,11 @@ pub struct ChatState {
 
 impl ChatState {
     pub fn new(model: String) -> Self {
-        Self { messages: Vec::new(), model, mode: Mode::Normal }
+        Self {
+            messages: LogBuffer::new(crate::log_buffer::DEFAULT_MAX),
+            model,
+            mode: Mode::Normal,
+        }
     }
 
     pub fn push_message(&mut self, msg: Message) {
@@ -43,7 +48,7 @@ mod tests {
         c.push_system("noise", LogLevel::Info);
         c.clear();
         assert_eq!(c.messages.len(), 1);
-        match &c.messages[0] {
+        match c.messages.iter().next().unwrap() {
             Message::System { text, level } => {
                 assert_eq!(text, "conversation cleared");
                 assert_eq!(*level, LogLevel::Notice);
