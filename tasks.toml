@@ -1,11 +1,11 @@
 # Task tab definitions. Add a [[task]] block to create a new tab.
 # commands = [] means all commands are allowed.
 
-[[task]]
-name = "main"
-hint = "general       —  model / plan / demo"
-commands = []
-border_color = [0, 255, 255]
+# [[task]]
+# name = "main"
+# hint = "general       —  model / plan / demo"
+# commands = []
+# border_color = [0, 255, 255]
 
 [[task]]
 name = "conn"
