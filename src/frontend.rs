@@ -107,15 +107,6 @@ impl Frontend {
     }
 
     fn apply_output(&self, out: &crate::ui::render_state::RenderOutput) {
-        // When scrolled up and new content arrives, push scroll down by the
-        // amount of new content to keep the view anchored.
-        if !self.follow_tail {
-            let prev = self.prev_total_lines.get();
-            if out.total_lines > prev {
-                let delta = out.total_lines - prev;
-                self.scroll.set(self.scroll.get().saturating_add(delta));
-            }
-        }
         self.viewport_height.set(out.viewport_height);
         self.prev_total_lines.set(out.total_lines);
     }
