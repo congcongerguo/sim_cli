@@ -151,13 +151,7 @@ pub async fn run(
                     if text.trim() == "exit" {
                         router.should_quit = true;
                     } else {
-                        // Use send().await to backpressure instead of silently dropping.
-                        // The select! polls this branch only when the channel has capacity.
-                        let tx = router.tasks[router.active].handle.cmd_tx.clone();
-                        if tx.send(text).await.is_err() {
-                            // Actor died — shouldn't happen in normal operation.
-                            break;
-                        }
+                        let _ = router.tasks[router.active].handle.cmd_tx.try_send(text);
                     }
                 }
                 Some(Command::TagSwitch(name)) => {
