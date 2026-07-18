@@ -360,7 +360,8 @@ impl Frontend {
                 return;
             }
             (KeyCode::Home, _) => {
-                self.scroll.set(0);
+                // Top of current buffer = evicted_lines (absolute)
+                self.scroll.set(self.view.evicted_lines as u16);
                 self.follow_tail.set(false);
                 return;
             }
