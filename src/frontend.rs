@@ -117,13 +117,21 @@ impl Frontend {
 
     fn apply_output(&self, out: &crate::ui::render_state::RenderOutput) {
         if self.follow_tail.get() {
-            // Following: no unseen lines, track current total.
             self.unseen_lines.set(0);
             self.total_at_follow.set(out.total_lines);
         } else {
-            // Detached: count lines added since we left follow mode.
-            let unseen = out.total_lines.saturating_sub(self.total_at_follow.get());
-            self.unseen_lines.set(unseen);
+            // If eviction has consumed the lines we were looking at,
+            // resume follow mode automatically.
+            let evicted = self.view.evicted_lines as u16;
+            if self.scroll.get() < evicted {
+                self.follow_tail.set(true);
+                self.scroll.set(0);
+                self.unseen_lines.set(0);
+                self.total_at_follow.set(out.total_lines);
+            } else {
+                let unseen = out.total_lines.saturating_sub(self.total_at_follow.get());
+                self.unseen_lines.set(unseen);
+            }
         }
         self.viewport_height.set(out.viewport_height);
         self.prev_total_lines.set(out.total_lines);

@@ -5,7 +5,7 @@ use std::collections::VecDeque;
 
 use crate::message::Message;
 
-pub const DEFAULT_MAX: usize = 10_000;
+pub const DEFAULT_MAX: usize = 200;
 
 /// How many render lines a message produces.
 pub fn msg_line_count(msg: &Message) -> u64 {
