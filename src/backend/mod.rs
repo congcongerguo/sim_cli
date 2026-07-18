@@ -92,10 +92,10 @@ impl ViewState {
 }
 
 pub struct Backend {
-    pub tasks: TaskManager,
-    pub llm: llm::LlmSubsystem,
-    pub modal: modal::ModalSubsystem,
-    pub should_quit: bool,
+    pub(crate) tasks: TaskManager,
+    pub(crate) llm: llm::LlmSubsystem,
+    pub(crate) modal: modal::ModalSubsystem,
+    pub(crate) should_quit: bool,
 }
 
 impl Backend {

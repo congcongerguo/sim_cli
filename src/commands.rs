@@ -83,9 +83,8 @@ pub struct CommandSpec {
     pub name: &'static str,
     pub desc: &'static str,
     pub subs: &'static [SubSpec],
-    /// Build the action from the (already-validated) sub-name. `None` for
-    /// no-arg commands; `Some(name)` is guaranteed to be one of `subs[i].name`.
-    pub build: fn(Option<&'static str>) -> Action,
+    /// Build the action from the (already-validated) sub-name.
+    pub build: fn(Option<&'static str>) -> Result<Action, ParseError>,
 }
 
 const MODEL_SUBS: &[SubSpec] = &[
@@ -115,98 +114,100 @@ pub static COMMANDS: &[CommandSpec] = &[
         name: "help",
         desc: "show available commands",
         subs: &[],
-        build: |_| Action::Help,
+        build: |_| Ok(Action::Help),
     },
     CommandSpec {
         name: "clear",
         desc: "clear the conversation",
         subs: &[],
-        build: |_| Action::Clear,
+        build: |_| Ok(Action::Clear),
     },
     CommandSpec {
         name: "exit",
         desc: "leave the CLI",
         subs: &[],
-        build: |_| Action::Exit,
+        build: |_| Ok(Action::Exit),
     },
     CommandSpec {
         name: "model",
         desc: "switch model: model <claude|opus|haiku>",
         subs: MODEL_SUBS,
-        build: |s| Action::Model(parse_model(s.expect("validated"))),
+        build: |s| Ok(Action::Model(parse_model(s.ok_or_else(|| ParseError::InternalDrift("missing sub".into()))?)?)),
     },
     CommandSpec {
         name: "plan",
         desc: "set plan mode: plan <on|off>",
         subs: PLAN_SUBS,
-        build: |s| Action::Plan(parse_plan(s.expect("validated"))),
+        build: |s| Ok(Action::Plan(parse_plan(s.ok_or_else(|| ParseError::InternalDrift("missing sub".into()))?)?)),
     },
     CommandSpec {
         name: "demo",
         desc: "show a UI demo: demo <chat|code|tool>",
         subs: DEMO_SUBS,
-        build: |s| Action::Demo(parse_demo(s.expect("validated"))),
+        build: |s| Ok(Action::Demo(parse_demo(s.ok_or_else(|| ParseError::InternalDrift("missing sub".into()))?)?)),
     },
     CommandSpec {
         name: "con",
         desc: "connect a transport: con <tcp|zmq>",
         subs: CON_SUBS,
-        build: |s| Action::Connect(parse_proto(s.expect("validated"))),
+        build: |s| Ok(Action::Connect(parse_proto(s.ok_or_else(|| ParseError::InternalDrift("missing sub".into()))?)?)),
     },
     CommandSpec {
         name: "close",
         desc: "disconnect the current transport",
         subs: &[],
-        build: |_| Action::Disconnect,
+        build: |_| Ok(Action::Disconnect),
     },
     CommandSpec {
         name: "send",
         desc: "build a JSON message, send it, await reply",
         subs: &[],
-        build: |_| Action::Send,
+        build: |_| Ok(Action::Send),
     },
     CommandSpec {
         name: "start",
         desc: "start demo periodic logging on current task",
         subs: &[],
-        build: |_| Action::Start,
+        build: |_| Ok(Action::Start),
     },
     CommandSpec {
         name: "stop",
         desc: "stop demo periodic logging on current task",
         subs: &[],
-        build: |_| Action::Stop,
+        build: |_| Ok(Action::Stop),
     },
 ];
 
-fn parse_model(s: &str) -> ModelChoice {
+fn parse_model(s: &str) -> Result<ModelChoice, ParseError> {
     match s {
-        "claude" => ModelChoice::Claude,
-        "opus" => ModelChoice::Opus,
-        "haiku" => ModelChoice::Haiku,
-        other => panic!("MODEL_SUBS / parse_model drift: {other}"),
+        "claude" => Ok(ModelChoice::Claude),
+        "opus" => Ok(ModelChoice::Opus),
+        "haiku" => Ok(ModelChoice::Haiku),
+        other => Err(ParseError::InternalDrift(format!("MODEL_SUBS drift: {other}"))),
     }
 }
 
-fn parse_plan(s: &str) -> PlanToggle {
+fn parse_plan(s: &str) -> Result<PlanToggle, ParseError> {
     match s {
-        "on" => PlanToggle::On,
-        "off" => PlanToggle::Off,
-        other => panic!("PLAN_SUBS / parse_plan drift: {other}"),
+        "on" => Ok(PlanToggle::On),
+        "off" => Ok(PlanToggle::Off),
+        other => Err(ParseError::InternalDrift(format!("PLAN_SUBS drift: {other}"))),
     }
 }
 
-fn parse_demo(s: &str) -> DemoScenario {
+fn parse_demo(s: &str) -> Result<DemoScenario, ParseError> {
     match s {
-        "chat" => DemoScenario::Chat,
-        "code" => DemoScenario::Code,
-        "tool" => DemoScenario::Tool,
-        other => panic!("DEMO_SUBS / parse_demo drift: {other}"),
+        "chat" => Ok(DemoScenario::Chat),
+        "code" => Ok(DemoScenario::Code),
+        "tool" => Ok(DemoScenario::Tool),
+        other => Err(ParseError::InternalDrift(format!("DEMO_SUBS drift: {other}"))),
     }
 }
 
-fn parse_proto(s: &str) -> Protocol {
-    Protocol::from_name(s).expect("CON_SUBS / Protocol::from_name drift")
+fn parse_proto(s: &str) -> Result<Protocol, ParseError> {
+    Protocol::from_name(s).ok_or_else(|| {
+        ParseError::InternalDrift(format!("CON_SUBS drift: {s}"))
+    })
 }
 
 // -----------------------------------------------------------------------------
@@ -223,6 +224,8 @@ pub enum ParseError {
     AmbiguousArg(&'static CommandSpec, Vec<&'static str>),
     UnexpectedArg(&'static CommandSpec, String),
     CommandNotAllowed(String, String),
+    /// Internal consistency error (COMMANDS table out of sync with parse_*).
+    InternalDrift(String),
 }
 
 impl fmt::Display for ParseError {
@@ -253,6 +256,9 @@ impl fmt::Display for ParseError {
             }
             ParseError::CommandNotAllowed(cmd, task) => {
                 write!(f, "'{cmd}' is not available in the '{task}' tab")
+            }
+            ParseError::InternalDrift(msg) => {
+                write!(f, "internal error: {msg}")
             }
         }
     }
@@ -449,7 +455,7 @@ pub fn parse_action(input: &str, task: Option<&str>) -> Result<Action, ParseErro
         if !rest.is_empty() {
             return Err(ParseError::UnexpectedArg(cmd, rest.join(" ")));
         }
-        return Ok((cmd.build)(None));
+        return (cmd.build)(None);
     }
 
     if rest.is_empty() {
@@ -465,7 +471,7 @@ pub fn parse_action(input: &str, task: Option<&str>) -> Result<Action, ParseErro
         Resolve::None => return Err(ParseError::UnknownArg(cmd, rest[0].to_string())),
     };
 
-    Ok((cmd.build)(Some(sub_name)))
+    (cmd.build)(Some(sub_name))
 }
 
 // -----------------------------------------------------------------------------
@@ -637,7 +643,7 @@ mod tests {
                 let input = spec.name;
                 let action = parse_action(input, None)
                     .unwrap_or_else(|e| panic!("'{input}' should parse: {e}"));
-                let expected = (spec.build)(None);
+                let expected = (spec.build)(None).unwrap();
                 assert_eq!(
                     action, expected,
                     "build({}, None) must match parse_action result",
@@ -648,7 +654,7 @@ mod tests {
                     let input = format!("{} {}", spec.name, sub.name);
                     let action = parse_action(&input, None)
                         .unwrap_or_else(|e| panic!("'{input}' should parse: {e}"));
-                    let expected = (spec.build)(Some(sub.name));
+                    let expected = (spec.build)(Some(sub.name)).unwrap();
                     assert_eq!(
                         action, expected,
                         "build({}, Some({})) must match parse_action result",

@@ -9,9 +9,9 @@ pub enum Mode {
 
 /// Conversation log + model/mode selection.
 pub struct ChatState {
-    pub messages: Vec<Message>,
-    pub model: String,
-    pub mode: Mode,
+    pub(crate) messages: Vec<Message>,
+    pub(crate) model: String,
+    pub(crate) mode: Mode,
 }
 
 impl ChatState {

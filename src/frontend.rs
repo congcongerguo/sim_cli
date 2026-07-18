@@ -36,24 +36,20 @@ pub enum InputState {
 
 pub struct Frontend {
     pub input: TextArea<'static>,
-    /// Lines scrolled away from the bottom (adjusted during render when content grows).
-    pub scroll: Cell<u16>,
-    pub follow_tail: bool,
-    pub menu_idx: usize,
-    pub tab_cycle: Option<TabCycle>,
-    pub demo_idx: usize,
-    pub modal_selected: usize,
+    pub(crate) scroll: Cell<u16>,
+    pub(crate) follow_tail: bool,
+    pub(crate) menu_idx: usize,
+    pub(crate) tab_cycle: Option<TabCycle>,
+    pub(crate) demo_idx: usize,
+    pub(crate) modal_selected: usize,
     pub view: ViewState,
-    pub panel_visible: bool,
+    pub(crate) panel_visible: bool,
     cmd_tx: mpsc::Sender<Command>,
     view_rx: watch::Receiver<ViewState>,
     history: Vec<String>,
     history_cursor: Option<usize>,
-    /// Number of visible lines in the conversation area (set during render).
-    pub viewport_height: Cell<u16>,
-    /// Previous total conversation lines — used to auto-adjust scroll when
-    /// new content arrives while the user is scrolled up.
-    pub prev_total_lines: Cell<u16>,
+    pub(crate) viewport_height: Cell<u16>,
+    pub(crate) prev_total_lines: Cell<u16>,
 }
 
 impl Frontend {

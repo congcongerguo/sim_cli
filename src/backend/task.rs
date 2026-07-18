@@ -67,19 +67,19 @@ pub struct TaskInfo {
 
 /// One task tab: owns its own conversation log and optional transport.
 pub struct Task {
-    pub name: String,
-    pub chat: ChatState,
-    pub conn: ConnSubsystem,
-    pub demo_running: bool,
-    pub demo_cancel: Option<watch::Sender<bool>>,
+    pub(crate) name: String,
+    pub(crate) chat: ChatState,
+    pub(crate) conn: ConnSubsystem,
+    pub(crate) demo_running: bool,
+    pub(crate) demo_cancel: Option<watch::Sender<bool>>,
 }
 
 /// Collection of tasks with an active tab.
 pub struct TaskManager {
-    pub tasks: Vec<Task>,
-    pub active: usize,
+    pub(crate) tasks: Vec<Task>,
+    pub(crate) active: usize,
     demo_tick_tx: mpsc::Sender<usize>,
-    pub demo_tick_rx: mpsc::Receiver<usize>,
+    pub(crate) demo_tick_rx: mpsc::Receiver<usize>,
 }
 
 impl TaskManager {

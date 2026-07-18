@@ -36,14 +36,14 @@ pub enum ConnOutcome {
 }
 
 pub struct ConnSubsystem {
-    pub conn: ConnState,
+    pub(crate) conn: ConnState,
     handle: Option<TransportHandle>,
     send_counter: u64,
     recv_counter: u64,
-    pub latest_recv: Option<serde_json::Value>,
-    pub latest_recv_at: Option<DateTime<Local>>,
+    pub(crate) latest_recv: Option<serde_json::Value>,
+    pub(crate) latest_recv_at: Option<DateTime<Local>>,
     ev_tx: mpsc::Sender<TransportEvent>,
-    pub ev_rx: mpsc::Receiver<TransportEvent>,
+    pub(crate) ev_rx: mpsc::Receiver<TransportEvent>,
 }
 
 impl ConnSubsystem {
