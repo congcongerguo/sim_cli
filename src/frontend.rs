@@ -51,9 +51,9 @@ pub struct Frontend {
     pub(crate) viewport_height: Cell<u16>,
     pub(crate) prev_total_lines: Cell<u16>,
     /// Lines added since user scrolled up (0 = following or content fits).
-    unseen_lines: Cell<u16>,
+    unseen_lines: Cell<u32>,
     /// Total lines the last time we were in follow mode.
-    total_at_follow: Cell<u16>,
+    total_at_follow: Cell<u32>,
 }
 
 impl Frontend {
@@ -116,11 +116,12 @@ impl Frontend {
     }
 
     fn apply_output(&self, out: &crate::ui::render_state::RenderOutput) {
+        let tl = out.total_lines as u32;
         if self.follow_tail.get() {
             self.unseen_lines.set(0);
-            self.total_at_follow.set(out.total_lines);
+            self.total_at_follow.set(tl);
         } else {
-            let unseen = out.total_lines.saturating_sub(self.total_at_follow.get());
+            let unseen = tl.saturating_sub(self.total_at_follow.get());
             self.unseen_lines.set(unseen);
         }
         self.viewport_height.set(out.viewport_height);
@@ -330,7 +331,7 @@ impl Frontend {
                     // First detach from bottom: scroll_offset must be an
                     // absolute line number (from the very first message).
                     // Bottom absolute = evicted_lines + max_scroll.
-                    let evicted = self.view.evicted_lines as u16;
+                    let evicted = self.view.evicted_lines.min(u16::MAX as u64) as u16;
                     let bottom_abs = evicted.saturating_add(max_scroll);
                     bottom_abs.saturating_sub(step)
                 } else {
@@ -349,7 +350,7 @@ impl Frontend {
                     return;
                 }
                 let cur = self.scroll.get().saturating_add(step);
-                let evicted = self.view.evicted_lines as u16;
+                let evicted = self.view.evicted_lines.min(u16::MAX as u64) as u16;
                 let bottom_abs = evicted.saturating_add(max_scroll);
                 if cur >= bottom_abs {
                     self.follow_tail.set(true);
@@ -361,7 +362,7 @@ impl Frontend {
             }
             (KeyCode::Home, _) => {
                 // Top of current buffer = evicted_lines (absolute)
-                self.scroll.set(self.view.evicted_lines as u16);
+                self.scroll.set(self.view.evicted_lines.min(u16::MAX as u64) as u16);
                 self.follow_tail.set(false);
                 return;
             }

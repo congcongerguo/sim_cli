@@ -33,7 +33,7 @@ pub struct RenderState {
     pub follow_tail: bool,
     #[allow(dead_code)]
     pub prev_total_lines: u16,
-    pub unseen_lines: u16,
+    pub unseen_lines: u32,
     pub evicted_lines: u64,
     pub buffer_total_lines: u64,
     pub panel_visible: bool,

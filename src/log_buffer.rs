@@ -61,8 +61,10 @@ impl LogBuffer {
         self.messages.is_empty()
     }
 
-    /// Clear all messages. Keeps eviction counter.
+    /// Clear all messages. Adds current lines to eviction count so the
+    /// absolute scroll coordinate remains valid.
     pub fn clear(&mut self) {
+        self.evicted_lines += self.total_lines;
         self.total_lines = 0;
         self.messages.clear();
     }
@@ -172,12 +174,15 @@ mod tests {
         let mut buf = LogBuffer::new(2);
         buf.push(msg("a"));
         buf.push(msg("b"));
-        buf.push(msg("c"));
+        buf.push(msg("c")); // evicts "a", buf now has "b","c"
         assert_eq!(buf.evicted_entries(), 1);
+        assert_eq!(buf.evicted_lines(), 1);
         buf.clear();
         assert_eq!(buf.len(), 0);
-        assert_eq!(buf.evicted_entries(), 1, "clear must not reset eviction counter");
-        assert_eq!(buf.evicted_lines(), 1, "clear must not reset eviction line counter");
+        assert_eq!(buf.total_lines(), 0);
+        // evicted_lines should include the cleared lines (b, c = 2 lines)
+        assert_eq!(buf.evicted_entries(), 1, "entry eviction count unchanged by clear");
+        assert_eq!(buf.evicted_lines(), 3, "cleared lines (2) added to evicted_lines (1)");
     }
 
     #[test]
@@ -301,6 +306,27 @@ mod tests {
         buf.push(msg("triggers eviction")); // evicts first msg
         assert_eq!(buf.evicted_lines(), 1, "evicted_lines must count lines, not entries");
         assert_eq!(buf.evicted_entries(), 1, "evicted_entries must count entries");
+    }
+
+    #[test]
+    fn multi_line_system_message() {
+        let mut buf = LogBuffer::new(10);
+        buf.push(Message::System { text: "line1\nline2\nline3".into(), level: LogLevel::Info });
+        assert_eq!(buf.total_lines(), 3, "3-line message should count as 3");
+        assert_eq!(buf.len(), 1);
+    }
+
+    #[test]
+    fn clear_adds_to_evicted_lines() {
+        let mut buf = LogBuffer::new(10);
+        buf.push(msg("a"));
+        buf.push(msg("b"));
+        assert_eq!(buf.total_lines(), 2);
+        let ev = buf.evicted_lines();
+        buf.clear();
+        assert_eq!(buf.total_lines(), 0);
+        assert_eq!(buf.len(), 0);
+        assert_eq!(buf.evicted_lines(), ev + 2, "cleared lines should add to evicted count");
     }
 
     #[test]

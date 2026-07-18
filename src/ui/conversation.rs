@@ -69,7 +69,8 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState, visible: u
     } else {
         // Detached: scroll_offset is absolute line number. Subtract evicted
         // lines so it maps to the current buffer window.
-        let adjusted = state.scroll_offset.saturating_sub(state.evicted_lines as u16);
+        let ev = state.evicted_lines.min(u16::MAX as u64) as u16;
+        let adjusted = state.scroll_offset.saturating_sub(ev);
         adjusted.min(max_scroll)
     };
 
@@ -78,7 +79,7 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState, visible: u
 
     if !state.follow_tail && total_lines > visible {
         let hint = if state.unseen_lines > 0 {
-            format!(" ▼ {} new — PgDn to follow ", state.unseen_lines)
+            format!(" ▼ {} new — PgDn to follow ", state.unseen_lines as u16)
         } else {
             " ▲ scrolled — PgDn to follow ".to_string()
         };
