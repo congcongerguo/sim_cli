@@ -72,8 +72,9 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState, visible: u
     let scroll = if state.follow_tail {
         max_scroll
     } else {
-        let ev = state.evicted_lines.min(u32::MAX as u64) as u32;
-        let adjusted = state.scroll_offset.wrapping_sub(ev).min(u16::MAX as u32) as u16;
+        // offset 和 evicted_lines 都是 u64，直接减。
+        let adjusted = (state.scroll_offset.saturating_sub(state.evicted_lines))
+            .min(u16::MAX as u64) as u16;
         adjusted.min(max_scroll)
     };
 
