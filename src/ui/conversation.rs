@@ -49,7 +49,7 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState, visible: u
         all.pop();
     }
 
-    // Use pre-computed total from LogBuffer (O(1)) instead of all.len().
+    // total_lines from LogBuffer (O(1) incremental, not all.len()).
     let total_lines = state.buffer_total_lines as u16;
     let mode_label = match state.mode {
         Mode::Normal => "normal",
@@ -63,12 +63,15 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState, visible: u
         .border_style(Style::default().fg(border_color))
         .title(Span::styled(title, Style::default().fg(border_color).add_modifier(Modifier::BOLD)));
 
+    // Convert absolute scroll_offset → buffer-relative for ratatui.
+    //   offset  = absolute line # (from first message ever)
+    //   evicted = cumulative lines removed from buffer front
+    //   adjusted = offset - evicted = position within current buffer
+    // Saturating math: never negative, clamped to [0, max_scroll].
     let max_scroll = total_lines.saturating_sub(visible);
     let scroll = if state.follow_tail {
         max_scroll
     } else {
-        // Detached: scroll_offset is absolute line number. Subtract evicted
-        // lines so it maps to the current buffer window.
         let ev = state.evicted_lines.min(u16::MAX as u64) as u32;
         let adjusted = state.scroll_offset.saturating_sub(ev).min(u16::MAX as u32) as u16;
         adjusted.min(max_scroll)

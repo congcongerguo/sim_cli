@@ -115,6 +115,11 @@ impl Frontend {
         }
     }
 
+    /// After each render: update viewport size, track unseen lines.
+    ///
+    /// When `follow_tail` is false (user scrolled up), `unseen_lines` counts
+    /// how many new lines have appeared since the user left follow mode.
+    /// This drives the "▼ N new" hint in the conversation area.
     fn apply_output(&self, out: &crate::ui::render_state::RenderOutput) {
         let tl = out.total_lines as u32;
         if self.follow_tail.get() {
@@ -284,6 +289,8 @@ impl Frontend {
         }
     }
 
+    /// Build ScrollInput from the current ViewState snapshot.
+    /// Called on every PageUp/Down/Home/End key press.
     fn scroll_input(&self) -> crate::scroll::ScrollInput {
         crate::scroll::ScrollInput {
             viewport: self.viewport_height.get(),

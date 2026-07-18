@@ -1,5 +1,31 @@
 //! Ring buffer for chat messages. Evicts oldest entries when full.
-//! Tracks `total_evicted` so the scroll position can be corrected.
+//!
+//! # Counters (all incremental, O(1) per push)
+//!
+//! | Field | Meaning | Used for |
+//! |---|---|---|
+//! | `total_lines` | current render line count | `buffer_total_lines` → scroll math |
+//! | `evicted_lines` | cumulative render lines evicted | scroll coordinate correction |
+//! | `total_evicted` | cumulative message count evicted | diagnostics only |
+//!
+//! `msg_line_count()` is called at `push()` time and on each eviction.
+//! The counts stay accurate as long as messages are not mutated in-place.
+//! (Currently only System messages are used in production; Tool/Assistant
+//! are gated behind the `mock-llm` feature.)
+//!
+//! # Scroll coordinate correction
+//!
+//! ```text
+//!   buffer before:  [old₀] [old₁] [cur₀] [cur₁] [cur₂]
+//!   evicted_lines = 0
+//!
+//!   push(new) → evict old₀:
+//!   buffer after:   [old₁] [cur₀] [cur₁] [cur₂] [new]
+//!   evicted_lines = msg_line_count(old₀)
+//!
+//!   User's scroll offset stays the same absolute value.
+//!   Render subtracts evicted_lines → shows same visual position.
+//! ```
 
 use std::collections::VecDeque;
 

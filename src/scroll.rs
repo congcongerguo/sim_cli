@@ -1,17 +1,59 @@
 //! Scroll state machine — pure functions for PageUp/Down/Home/End.
-//! Extracted from frontend.rs key handlers for testability.
+//!
+//! # Coordinate system
+//!
+//! `offset` is an **absolute** line number counting from the very first
+//! message ever pushed.  Messages that have been evicted from the buffer
+//! still occupy their original absolute coordinates — the visible window
+//! starts at `evicted_lines`.
+//!
+//! ```text
+//!   absolute line 0 ─── [evicted] ─── [buffer content] ─── [bottom]
+//!                      ╰── gone ──╯  ╰── total_lines ──╯
+//! ```
+//!
+//! The renderer converts `offset` to a buffer-relative position by
+//! subtracting `evicted_lines`.  This keeps the view anchored when old
+//! messages are evicted: the offset stays the same, the subtraction
+//! automatically shifts to the new buffer window.
+//!
+//! # Data flow
+//!
+//! ```text
+//!   LogBuffer (incremental) → TaskSnapshot → ViewState → ScrollInput
+//!          total_lines ──────────┤                │
+//!          evicted_lines ────────┘                │
+//!                                                 ↓
+//!                                     frontend::scroll_input()
+//!                                                 ↓
+//!                               scroll::page_up / page_down / home / end
+//!                                                 ↓
+//!                               ScrollState { offset, follow_tail }
+//!                                                 ↓
+//!                               RenderState::scroll_offset ──→ conversation.rs
+//!                                                 │
+//!                               adjusted = offset - evicted_lines
+//!                                                 │
+//!                               ratatui Paragraph::scroll(adjusted)
+//! ```
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScrollState {
-    pub offset: u32,      // absolute line number from the first message
+    /// Absolute line number (from the first message ever).
+    /// Converted to buffer-relative in conversation.rs via `offset - evicted_lines`.
+    pub offset: u32,
+    /// When true, the view tracks the bottom of the buffer automatically.
     pub follow_tail: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct ScrollInput {
-    pub viewport: u16,         // visible lines in conversation area
-    pub total_lines: u64,      // current buffer line count
-    pub evicted_lines: u64,    // cumulative evicted line count
+    /// Number of visible lines in the conversation area (viewport_height).
+    pub viewport: u16,
+    /// Total render lines in the buffer (LogBuffer::total_lines).
+    pub total_lines: u64,
+    /// Cumulative evicted render lines (LogBuffer::evicted_lines).
+    pub evicted_lines: u64,
 }
 
 impl ScrollInput {
