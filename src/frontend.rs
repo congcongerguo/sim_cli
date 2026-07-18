@@ -35,7 +35,7 @@ enum CompletionCtx {
 
 pub struct Frontend {
     pub input: TextArea<'static>,
-    pub(crate) scroll: Cell<u64>,
+    pub(crate) scroll: Cell<u32>,
     pub(crate) follow_tail: Cell<bool>,
     pub(crate) menu_idx: usize,
     pub(crate) tab_cycle: Option<TabCycle>,
@@ -64,7 +64,7 @@ impl Frontend {
         let view = view_rx.borrow().clone();
         Self {
             input,
-            scroll: Cell::new(0u64),
+            scroll: Cell::new(0u32),
             follow_tail: Cell::new(true),
             menu_idx: 0,
             tab_cycle: None,
