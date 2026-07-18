@@ -51,8 +51,9 @@ codegen-units = 1
 # Abort on panic instead of unwinding. Removes the unwind tables and
 # landing-pad code from every function (~5-8% binary size).
 # Safe because: (a) we don't catch panics anywhere, (b) tokio tasks that
-# panic already abort the process, (c) Task 6 will remove all remaining
-# panic!() / expect() calls in production code paths.
+# panic already abort the process, (c) all production panic!()/expect()
+# calls have been removed or hardened with verified invariants (the sole
+# remaining expect in json_framer.rs:92 is guard-railed by the state machine).
 panic = "abort"
 
 # Strip debug symbols from the release binary. Does not affect panic

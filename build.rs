@@ -29,6 +29,13 @@ fn main() -> Result<()> {
             Some(s) => format!("Some(\"{s}\")"),
             None => "None".to_string(),
         };
+        let bc = &task.border_color;
+        if bc.len() < 3 {
+            panic!(
+                "tasks.toml: task '{}' border_color needs 3 RGB values, got {:?}",
+                task.name, bc
+            );
+        }
         code.push_str(&format!(
             "    TaskDef {{\n\
              \x20       name: \"{}\",\n\
@@ -39,7 +46,7 @@ fn main() -> Result<()> {
              \x20       zmq_pub_addr: {},\n\
              \x20   }},\n",
             task.name, task.hint,
-            task.border_color[0], task.border_color[1], task.border_color[2],
+            bc[0], bc[1], bc[2],
             addr(&task.tcp_addr),
             addr(&task.zmq_sub_addr),
             addr(&task.zmq_pub_addr),

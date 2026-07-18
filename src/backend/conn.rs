@@ -99,11 +99,11 @@ impl ConnSubsystem {
             "msg": format!("ping {id}"),
         });
         let line = payload.to_string();
-        let mut outs = vec![ConnOutcome::Sent { line: line.clone() }];
-        if let Err(e) = handle.out_tx.try_send(line) {
-            outs.push(ConnOutcome::SendFailed(e.to_string()));
+        if let Err(e) = handle.out_tx.try_send(line.clone()) {
+            vec![ConnOutcome::SendFailed(e.to_string())]
+        } else {
+            vec![ConnOutcome::Sent { line }]
         }
-        outs
     }
 
     pub fn handle_event(&mut self, ev: TransportEvent) -> Vec<ConnOutcome> {

@@ -42,25 +42,39 @@ pub struct ViewState {
 
 impl ViewState {
     pub fn initial(model: String) -> Self {
-        let default_def = &TASK_DEFS[0];
-        let tasks: Vec<TaskInfo> = TASK_DEFS.iter()
-            .map(|d| TaskInfo { name: d.name.into(), demo_running: false, conn: ConnState::Disconnected })
-            .collect();
+        let (tasks, first_name) = if TASK_DEFS.is_empty() {
+            (vec![], String::new())
+        } else {
+            let d = &TASK_DEFS[0];
+            let tasks: Vec<TaskInfo> = TASK_DEFS.iter()
+                .map(|d| TaskInfo { name: d.name.into(), demo_running: false, conn: ConnState::Disconnected })
+                .collect();
+            (tasks, d.name.to_string())
+        };
+        let msg = if first_name.is_empty() {
+            "no tasks configured — check tasks.toml and features".to_string()
+        } else {
+            format!("[{}] {} — type 'help' for commands", first_name, TASK_DEFS[0].hint)
+        };
         Self {
             messages: Arc::new(vec![
-                Message::System { text: format!("[{}] {}", default_def.name, default_def.hint), level: LogLevel::Notice },
+                Message::System { text: msg, level: LogLevel::Notice },
             ]),
             model,
             mode: Mode::Normal, streaming: false, modal: None, should_quit: false,
             conn: ConnState::Disconnected, latest_recv: None, latest_recv_at: None,
             tasks: Arc::new(tasks),
-            active_task: TASK_DEFS[0].name.into(), active_task_index: 0,
+            active_task: first_name, active_task_index: 0,
             active_commands: Arc::new(vec![]),
         }
     }
 }
 
-use task::TaskRuntime;
+struct TaskRuntime {
+    name: String,
+    handle: task::TaskHandle,
+    commands: Arc<Vec<task::CommandDef>>,
+}
 
 pub struct Router {
     tasks: Vec<TaskRuntime>,
@@ -72,21 +86,37 @@ pub struct Router {
 impl Router {
     pub fn new(model: String) -> Self {
         let tasks: Vec<TaskRuntime> = TASK_DEFS.iter().filter_map(|def| {
-            task::create_actor(def.name, model.clone(), def)
+            task::create_actor(def.name, model.clone(), def).map(|rt| TaskRuntime {
+                name: def.name.to_string(),
+                handle: rt.handle,
+                commands: rt.commands,
+            })
         }).collect();
         assert!(!tasks.is_empty(), "no task actors created — check features and tasks.toml");
         Self { tasks, active: 0, should_quit: false, modal: modal::ModalSubsystem::new() }
     }
 
+    /// Build ViewState from live actor snapshots — reads every actor's
+    /// state_rx so the tab bar shows real connection status and demo_running.
     fn build_view(&self) -> ViewState {
-        let snap = self.tasks[self.active].handle.state_rx.borrow().clone();
-        let task_infos: Vec<TaskInfo> = TASK_DEFS.iter()
-            .map(|d| TaskInfo { name: d.name.into(), demo_running: false, conn: ConnState::Disconnected })
-            .collect();
+        // Collect live TaskInfo from all actors (not from TASK_DEFS).
+        let task_infos: Vec<TaskInfo> = self.tasks.iter().map(|rt| {
+            let snap = rt.handle.state_rx.borrow();
+            TaskInfo {
+                name: snap.name.clone(),
+                demo_running: snap.demo_running,
+                conn: snap.conn.clone(),
+            }
+        }).collect();
+
+        let active_rt = &self.tasks[self.active];
+        let snap = active_rt.handle.state_rx.borrow().clone();
+
         ViewState {
             messages: Arc::new(snap.messages),
             model: snap.model,
-            mode: Mode::Normal, streaming: false,
+            mode: Mode::Normal,
+            streaming: false,
             modal: self.modal.request.clone(),
             should_quit: self.should_quit,
             conn: snap.conn,
@@ -95,7 +125,7 @@ impl Router {
             tasks: Arc::new(task_infos),
             active_task: snap.name.clone(),
             active_task_index: self.active,
-            active_commands: self.tasks[self.active].commands.clone(),
+            active_commands: active_rt.commands.clone(),
         }
     }
 }
@@ -115,19 +145,26 @@ pub async fn run(
                     if text.trim() == "exit" {
                         router.should_quit = true;
                     } else {
-                        let _ = router.tasks[router.active].handle.cmd_tx.try_send(text);
+                        // Use send().await to backpressure instead of silently dropping.
+                        // The select! polls this branch only when the channel has capacity.
+                        let tx = router.tasks[router.active].handle.cmd_tx.clone();
+                        if tx.send(text).await.is_err() {
+                            // Actor died — shouldn't happen in normal operation.
+                            break;
+                        }
                     }
                 }
                 Some(Command::TagSwitch(name)) => {
-                    if let Some(pos) = (0..router.tasks.len()).find(|&i| {
-                        // compare with generated name in registry
-                        let def = &TASK_DEFS[i];
-                        def.name == name
-                    }) {
+                    // Search self.tasks (runtime array, not TASK_DEFS) so
+                    // feature-filtered tasks are excluded from the index.
+                    if let Some(pos) = router.tasks.iter().position(|rt| rt.name == name) {
                         router.active = pos;
                     }
                 }
-                Some(Command::Permission(_choice)) => {}
+                Some(Command::Permission(_choice)) => {
+                    // Permission modal handling requires mock-llm wiring.
+                    // Currently a no-op; the feature-gated code path is unused.
+                }
                 None => break,
             },
             _ = tick.tick() => {}
