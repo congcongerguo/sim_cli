@@ -15,7 +15,6 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState) {
     } else {
         match state.input_state {
             InputState::Ambiguous | InputState::Unknown => Color::Red,
-            InputState::MissingArg => Color::Yellow,
             InputState::Resolvable => Color::Green,
             InputState::Empty => Color::DarkGray,
         }
@@ -25,9 +24,8 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState) {
         " streaming… ".to_string()
     } else {
         match state.input_state {
-            InputState::Ambiguous => " command  (ambiguous — Tab/Enter to disambiguate) ".to_string(),
+            InputState::Ambiguous => " command  (ambiguous — Tab/Enter to pick) ".to_string(),
             InputState::Unknown => " command  (unknown — Tab for suggestions) ".to_string(),
-            InputState::MissingArg => " command  (needs an arg — Tab/Enter to pick) ".to_string(),
             InputState::Resolvable | InputState::Empty => {
                 " command  (Tab=complete  Enter=run  ↑↓=pick) ".to_string()
             }

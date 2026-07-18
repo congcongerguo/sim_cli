@@ -6,6 +6,16 @@ use super::super::conn::{self, ConnSubsystem};
 use super::registry::TaskDef;
 use super::{cmd, CommandDef, SubDef, TaskActor, TaskSnapshot};
 
+#[cfg(feature = "zmq")]
+const CON_SUBS: &[SubDef] = &[
+    SubDef { name: "tcp", desc: "TCP echo" },
+    SubDef { name: "zmq", desc: "ZMQ pub/sub" },
+];
+#[cfg(not(feature = "zmq"))]
+const CON_SUBS: &[SubDef] = &[
+    SubDef { name: "tcp", desc: "TCP echo" },
+];
+
 pub struct ConnTask {
     chat: ChatState,
     conn: ConnSubsystem,
@@ -43,15 +53,11 @@ impl ConnTask {
 
 impl TaskActor for ConnTask {
     fn commands(&self) -> Vec<CommandDef> {
-        let mut subs = vec![SubDef { name: "tcp", desc: "TCP echo" }];
-        #[cfg(feature = "zmq")]
-        subs.push(SubDef { name: "zmq", desc: "ZMQ pub/sub" });
-
         vec![
             cmd("help", "show commands"),
             cmd("clear", "clear log"),
             cmd("exit", "quit"),
-            CommandDef { name: "con", desc: "connect transport", subs: subs.leak() },
+            CommandDef { name: "con", desc: "connect transport", subs: CON_SUBS },
             cmd("close", "disconnect"),
             cmd("send", "send message"),
         ]

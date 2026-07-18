@@ -35,19 +35,13 @@ pub const fn cmd(name: &'static str, desc: &'static str) -> CommandDef {
     CommandDef { name, desc, subs: &[] }
 }
 
-impl CommandDef {
-    pub const fn subs(mut self, subs: &'static [SubDef]) -> Self {
-        self.subs = subs;
-        self
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct TaskSnapshot {
     pub name: String,
     pub messages: Vec<Message>,
     pub model: String,
     pub conn: ConnState,
+    #[allow(dead_code)]
     pub demo_running: bool,
     pub latest_recv: Option<serde_json::Value>,
     pub latest_recv_at: Option<chrono::DateTime<chrono::Local>>,
@@ -84,9 +78,11 @@ pub trait TaskActor: Send + 'static {
     fn tick(&mut self) -> Vec<Message> { vec![] }
 
     /// Transport event callback. Default: no-op.
+    #[allow(dead_code)]
     fn on_transport(&mut self, _ev: TransportEvent) -> Vec<Message> { vec![] }
 
     /// Chat log access.
+    #[allow(dead_code)]
     fn chat(&self) -> &ChatState;
     fn chat_mut(&mut self) -> &mut ChatState;
 

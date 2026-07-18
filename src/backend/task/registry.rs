@@ -15,7 +15,6 @@ pub struct TaskInfo {
 pub struct TaskDef {
     pub name: &'static str,
     pub hint: &'static str,
-    pub commands: &'static [&'static str],
     pub border_color: (u8, u8, u8),
     #[allow(dead_code)]
     pub zmq_sub_addr: Option<&'static str>,
@@ -27,10 +26,6 @@ pub struct TaskDef {
 impl TaskDef {
     pub fn find(name: &str) -> Option<&'static TaskDef> {
         TASK_DEFS.iter().find(|d| d.name == name)
-    }
-
-    pub fn is_allowed(&self, cmd: &str) -> bool {
-        self.commands.is_empty() || self.commands.contains(&cmd)
     }
 
     pub fn tcp_addr(&self) -> &str {

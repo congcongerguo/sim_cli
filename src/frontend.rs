@@ -15,8 +15,6 @@ const PLACEHOLDER: &str = "command (Tab to complete, Enter to run)";
 
 #[derive(Debug, Default)]
 pub struct TabCycle {
-    pub names: Vec<String>,
-    pub head: String,
     pub idx: usize,
 }
 
@@ -25,7 +23,6 @@ pub enum InputState {
     Empty,
     Resolvable,
     Ambiguous,
-    MissingArg,
     Unknown,
 }
 
@@ -462,7 +459,7 @@ impl Frontend {
             }
             match self.input_state() {
                 InputState::Resolvable => self.submit(text),
-                InputState::MissingArg | InputState::Ambiguous => self.handle_tab(),
+                InputState::Ambiguous => self.handle_tab(),
                 InputState::Unknown => self.submit(text),
                 InputState::Empty => {}
             }
@@ -532,14 +529,9 @@ impl Frontend {
         } else {
             let new_idx = if let Some(cycle) = &mut self.tab_cycle {
                 cycle.idx = (cycle.idx + 1) % menu.len();
-                cycle.head = head.clone();
                 cycle.idx
             } else {
-                self.tab_cycle = Some(TabCycle {
-                    names: menu.iter().map(|(n, _)| n.clone()).collect(),
-                    head: head.clone(),
-                    idx: 0,
-                });
+                self.tab_cycle = Some(TabCycle { idx: 0 });
                 0
             };
             self.menu_idx = new_idx;

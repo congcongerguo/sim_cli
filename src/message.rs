@@ -1,3 +1,4 @@
+#[cfg_attr(not(feature = "mock-llm"), allow(dead_code))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ToolStatus {
     AwaitingPermission,
@@ -26,10 +27,9 @@ pub enum LogLevel {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Assistant {
-        text: String,
-        streaming: bool,
-    },
+    #[cfg_attr(not(feature = "mock-llm"), allow(dead_code))]
+    Assistant { text: String, streaming: bool },
+    #[cfg_attr(not(feature = "mock-llm"), allow(dead_code))]
     Tool(ToolCall),
     System {
         text: String,

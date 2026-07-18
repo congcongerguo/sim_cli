@@ -8,11 +8,10 @@ use crate::mock_llm::{self, Scenario};
 use super::chat::ChatState;
 use super::modal::ModalSubsystem;
 
+#[cfg_attr(not(feature = "mock-llm"), allow(dead_code))]
 const CHANNEL_BUFFER: usize = 64;
 
-/// LLM streaming + scripted demos. Mutates `ChatState` directly because the
-/// token stream is inherently message-shaped — there is no useful intermediate
-/// representation.
+#[cfg_attr(not(feature = "mock-llm"), allow(dead_code))]
 pub struct LlmSubsystem {
     pub streaming: bool,
     #[allow(dead_code)]
@@ -20,6 +19,7 @@ pub struct LlmSubsystem {
     pub rx: mpsc::Receiver<LlmEvent>,
 }
 
+#[cfg_attr(not(feature = "mock-llm"), allow(dead_code))]
 impl LlmSubsystem {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel(CHANNEL_BUFFER);

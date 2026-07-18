@@ -13,17 +13,21 @@ pub enum ModalChoice {
 
 #[derive(Debug, Clone)]
 pub struct ModalRequest {
+    #[allow(dead_code)]
     pub tool_index: usize,
     pub tool_name: String,
     pub args_preview: String,
 }
 
-/// Permission-modal lifecycle and the user's persisted "always allow" set.
+/// Permission-modal lifecycle. Unused without mock-llm.
+#[cfg_attr(not(feature = "mock-llm"), allow(dead_code))]
 pub struct ModalSubsystem {
     pub request: Option<ModalRequest>,
+    #[allow(dead_code)]
     allow_always: HashSet<String>,
 }
 
+#[cfg_attr(not(feature = "mock-llm"), allow(dead_code))]
 impl ModalSubsystem {
     pub fn new() -> Self {
         Self {

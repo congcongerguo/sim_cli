@@ -25,12 +25,6 @@ fn main() -> Result<()> {
     );
 
     for task in &config.task {
-        let cmds: Vec<String> = task.commands.iter().map(|c| format!("\"{c}\"")).collect();
-        let cmds_str = if cmds.is_empty() {
-            "&[]".to_string()
-        } else {
-            format!("&[{}]", cmds.join(", "))
-        };
         let addr = |v: &Option<String>| match v {
             Some(s) => format!("Some(\"{s}\")"),
             None => "None".to_string(),
@@ -39,7 +33,6 @@ fn main() -> Result<()> {
             "    TaskDef {{\n\
              \x20       name: \"{}\",\n\
              \x20       hint: \"{}\",\n\
-             \x20       commands: {cmds_str},\n\
              \x20       border_color: ({}, {}, {}),\n\
              \x20       tcp_addr: {},\n\
              \x20       zmq_sub_addr: {},\n\
@@ -67,6 +60,7 @@ struct TaskDefToml {
     name: String,
     hint: String,
     #[serde(default)]
+    #[allow(dead_code)]
     commands: Vec<String>,
     #[serde(default)]
     border_color: Vec<u8>,

@@ -10,6 +10,7 @@ pub enum Mode {
 pub struct ChatState {
     pub(crate) messages: Vec<Message>,
     pub(crate) model: String,
+    #[allow(dead_code)]
     pub(crate) mode: Mode,
 }
 

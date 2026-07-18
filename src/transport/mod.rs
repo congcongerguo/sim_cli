@@ -21,6 +21,7 @@ impl Protocol {
         }
     }
 
+    #[allow(dead_code)]
     pub fn from_name(name: &str) -> Option<Protocol> {
         match name {
             "tcp" => Some(Protocol::Tcp),
