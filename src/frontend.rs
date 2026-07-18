@@ -29,6 +29,13 @@ pub enum InputState {
     Unknown,
 }
 
+/// Completion context: are we matching a command prefix or a sub-command?
+enum CompletionCtx {
+    Command { prefix: String },
+    Sub { cmd_name: String, prefix: String },
+    None,
+}
+
 pub struct Frontend {
     pub input: TextArea<'static>,
     pub(crate) scroll: Cell<u16>,
@@ -164,24 +171,68 @@ impl Frontend {
         }
     }
 
-    pub fn menu_items(&self) -> Vec<(String, String)> {
+    fn completion_ctx(&self) -> CompletionCtx {
         let text = self.current_text();
         let trimmed = text.trim();
         if trimmed.is_empty() {
-            return vec![];
+            return CompletionCtx::None;
         }
+        // Check if there's a trailing space → sub-command context
+        let has_trailing_space = text.ends_with(char::is_whitespace);
         let parts: Vec<&str> = trimmed.split_whitespace().collect();
-        let prefix = parts[0];
-        // Filter active task's commands by prefix
-        self.view.active_commands.iter()
-            .filter(|c| c.name.starts_with(prefix))
-            .map(|c| (c.name.to_string(), c.desc.to_string()))
-            .collect()
+        let first = parts[0].to_string();
+
+        if parts.len() == 1 && !has_trailing_space {
+            // "co" → command prefix
+            return CompletionCtx::Command { prefix: first };
+        }
+
+        // "con " or "con t" → may be sub-context
+        let exact_match = self.view.active_commands.iter().any(|c| c.name == first && !c.subs.is_empty());
+        if exact_match {
+            let sub_prefix = if parts.len() >= 2 { parts[1].to_string() } else { String::new() };
+            return CompletionCtx::Sub { cmd_name: first, prefix: sub_prefix };
+        }
+
+        // Still matching command prefix (e.g., "c " or "co " after a partial)
+        if parts.len() == 1 && has_trailing_space {
+            return CompletionCtx::Command { prefix: first };
+        }
+
+        CompletionCtx::None
+    }
+
+    pub fn menu_items(&self) -> Vec<(String, String)> {
+        match self.completion_ctx() {
+            CompletionCtx::Command { prefix } => {
+                self.view.active_commands.iter()
+                    .filter(|c| c.name.starts_with(&prefix))
+                    .map(|c| (c.name.to_string(), c.desc.to_string()))
+                    .collect()
+            }
+            CompletionCtx::Sub { cmd_name, prefix } => {
+                for c in self.view.active_commands.iter() {
+                    if c.name == cmd_name {
+                        return c.subs.iter()
+                            .filter(|s| s.name.starts_with(&prefix))
+                            .map(|s| (s.name.to_string(), s.desc.to_string()))
+                            .collect();
+                    }
+                }
+                vec![]
+            }
+            CompletionCtx::None => vec![],
+        }
     }
 
     pub fn menu_title(&self) -> Option<String> {
-        let menu = self.menu_items();
-        if menu.is_empty() { None } else { Some("commands".into()) }
+        match self.completion_ctx() {
+            CompletionCtx::Sub { cmd_name, .. } => Some(format!("{cmd_name} <arg>")),
+            CompletionCtx::Command { .. } => {
+                if self.menu_items().is_empty() { None } else { Some("commands".into()) }
+            }
+            CompletionCtx::None => None,
+        }
     }
 
     pub fn input_state(&self) -> InputState {
@@ -189,14 +240,33 @@ impl Frontend {
         if current.trim().is_empty() {
             return InputState::Empty;
         }
-        let parts: Vec<&str> = current.trim().split_whitespace().collect();
-        let matches: Vec<_> = self.view.active_commands.iter()
-            .filter(|c| c.name.starts_with(parts[0]))
-            .collect();
-        match matches.len() {
-            0 => InputState::Unknown,
-            1 => InputState::Resolvable,
-            _ => InputState::Ambiguous,
+        match self.completion_ctx() {
+            CompletionCtx::Command { prefix } => {
+                let matches: Vec<_> = self.view.active_commands.iter()
+                    .filter(|c| c.name.starts_with(&prefix))
+                    .collect();
+                match matches.len() {
+                    0 => InputState::Unknown,
+                    1 => InputState::Resolvable,
+                    _ => InputState::Ambiguous,
+                }
+            }
+            CompletionCtx::Sub { cmd_name, prefix } => {
+                for c in self.view.active_commands.iter() {
+                    if c.name == cmd_name {
+                        let matches: Vec<_> = c.subs.iter()
+                            .filter(|s| s.name.starts_with(&prefix))
+                            .collect();
+                        return match matches.len() {
+                            0 => InputState::Unknown,
+                            1 => InputState::Resolvable,
+                            _ => InputState::Ambiguous,
+                        };
+                    }
+                }
+                InputState::Unknown
+            }
+            CompletionCtx::None => InputState::Unknown,
         }
     }
 
@@ -444,27 +514,66 @@ impl Frontend {
 
     fn handle_tab(&mut self) {
         let menu = self.menu_items();
+        if menu.is_empty() {
+            return;
+        }
+
+        // For sub-completions, preserve the command prefix ("con ") in the input.
+        let head = match self.completion_ctx() {
+            CompletionCtx::Sub { cmd_name, .. } => format!("{cmd_name} "),
+            _ => String::new(),
+        };
+
         if menu.len() == 1 {
-            let text = menu[0].0.clone();
+            let text = format!("{head}{}", menu[0].0);
             self.replace_input(&text);
             self.menu_idx = 0;
             self.tab_cycle = None;
-        } else if menu.len() > 1 {
+        } else {
             let new_idx = if let Some(cycle) = &mut self.tab_cycle {
                 cycle.idx = (cycle.idx + 1) % menu.len();
+                cycle.head = head.clone();
                 cycle.idx
             } else {
                 self.tab_cycle = Some(TabCycle {
                     names: menu.iter().map(|(n, _)| n.clone()).collect(),
-                    head: String::new(),
+                    head: head.clone(),
                     idx: 0,
                 });
                 0
             };
             self.menu_idx = new_idx;
-            let text = menu[new_idx].0.clone();
+            let text = format!("{head}{}", menu[new_idx].0);
             self.replace_input(&text);
         }
+    }
+
+    /// Expand partial command/sub prefix to full name before sending.
+    fn expand_text(&self, text: String) -> String {
+        match self.completion_ctx() {
+            CompletionCtx::Command { prefix } => {
+                let matches: Vec<_> = self.view.active_commands.iter()
+                    .filter(|c| c.name.starts_with(&prefix))
+                    .collect();
+                if matches.len() == 1 && matches[0].name != prefix {
+                    return matches[0].name.to_string();
+                }
+            }
+            CompletionCtx::Sub { cmd_name, prefix } => {
+                for c in self.view.active_commands.iter() {
+                    if c.name == cmd_name {
+                        let matches: Vec<_> = c.subs.iter()
+                            .filter(|s| s.name.starts_with(&prefix))
+                            .collect();
+                        if matches.len() == 1 && matches[0].name != prefix {
+                            return format!("{cmd_name} {}", matches[0].name);
+                        }
+                    }
+                }
+            }
+            CompletionCtx::None => {}
+        }
+        text
     }
 
     fn submit(&mut self, text: String) {
@@ -473,6 +582,15 @@ impl Frontend {
         self.follow_tail = true;
         self.scroll.set(0);
         self.history_cursor = None;
+
+        // Ambiguous → auto-complete instead of submitting
+        if matches!(self.input_state(), InputState::Ambiguous) {
+            self.handle_tab();
+            return;
+        }
+
+        // Expand partial sub-command prefix before sending
+        let text = self.expand_text(text);
 
         if self.history.last().map_or(true, |last| last != &text) {
             self.history.push(text.clone());
