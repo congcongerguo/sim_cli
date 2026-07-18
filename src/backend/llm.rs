@@ -1,7 +1,5 @@
 use tokio::sync::mpsc;
 
-#[cfg(feature = "mock-llm")]
-use crate::commands::DemoScenario;
 use crate::event::LlmEvent;
 use crate::message::Message;
 #[cfg(feature = "mock-llm")]

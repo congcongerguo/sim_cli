@@ -450,21 +450,20 @@ impl Frontend {
             self.menu_idx = 0;
             self.tab_cycle = None;
         } else if menu.len() > 1 {
-            if let Some(cycle) = self.tab_cycle.as_mut() {
+            let new_idx = if let Some(cycle) = &mut self.tab_cycle {
                 cycle.idx = (cycle.idx + 1) % menu.len();
-                self.menu_idx = cycle.idx;
-                let text = menu[cycle.idx].0.clone();
-                drop(cycle);
-                self.replace_input(&text);
+                cycle.idx
             } else {
                 self.tab_cycle = Some(TabCycle {
                     names: menu.iter().map(|(n, _)| n.clone()).collect(),
                     head: String::new(),
                     idx: 0,
                 });
-                let text = menu[0].0.clone();
-                self.replace_input(&text);
-            }
+                0
+            };
+            self.menu_idx = new_idx;
+            let text = menu[new_idx].0.clone();
+            self.replace_input(&text);
         }
     }
 

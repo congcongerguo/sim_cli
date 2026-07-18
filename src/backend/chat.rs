@@ -1,4 +1,3 @@
-use crate::commands::{ModelChoice, PlanToggle};
 use crate::message::{LogLevel, Message};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -7,7 +6,7 @@ pub enum Mode {
     Plan,
 }
 
-/// Conversation log + model/mode selection.
+/// Conversation log.
 pub struct ChatState {
     pub(crate) messages: Vec<Message>,
     pub(crate) model: String,
@@ -16,11 +15,7 @@ pub struct ChatState {
 
 impl ChatState {
     pub fn new(model: String) -> Self {
-        Self {
-            messages: Vec::new(),
-            model,
-            mode: Mode::Normal,
-        }
+        Self { messages: Vec::new(), model, mode: Mode::Normal }
     }
 
     pub fn push_message(&mut self, msg: Message) {
@@ -35,29 +30,11 @@ impl ChatState {
         self.messages.clear();
         self.push_system("conversation cleared", LogLevel::Notice);
     }
-
-    pub fn set_model(&mut self, choice: ModelChoice) {
-        self.model = choice.slug().to_string();
-    }
-
-    pub fn set_plan(&mut self, toggle: PlanToggle) {
-        self.mode = match toggle {
-            PlanToggle::On => Mode::Plan,
-            PlanToggle::Off => Mode::Normal,
-        };
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn set_model_updates_model_string() {
-        let mut c = ChatState::new("claude".into());
-        c.set_model(ModelChoice::Haiku);
-        assert_eq!(c.model, "haiku");
-    }
 
     #[test]
     fn clear_leaves_only_cleared_notice() {

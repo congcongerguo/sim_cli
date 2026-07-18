@@ -1,5 +1,4 @@
 mod backend;
-mod commands;
 mod event;
 mod frontend;
 mod help;
