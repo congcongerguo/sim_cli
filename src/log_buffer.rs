@@ -64,9 +64,16 @@ impl LogBuffer {
         self.messages.get_mut(index)
     }
 
-    /// Clone all messages into a Vec (for snapshots).
+    /// Clone all messages into a Vec (for tests).
+    #[allow(dead_code)]
     pub fn to_vec(&self) -> Vec<Message> {
         self.messages.iter().cloned().collect()
+    }
+
+    /// Return a shared snapshot of the current buffer. Use this for ViewState
+    /// to avoid re-cloning the entire buffer every frame.
+    pub fn to_arc(&self) -> std::sync::Arc<Vec<Message>> {
+        std::sync::Arc::new(self.messages.iter().cloned().collect())
     }
 }
 

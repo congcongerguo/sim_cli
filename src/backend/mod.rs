@@ -115,7 +115,7 @@ impl Router {
         let snap = active_rt.handle.state_rx.borrow().clone();
 
         ViewState {
-            messages: Arc::new(snap.messages),
+            messages: snap.messages.clone(),
             model: snap.model,
             mode: Mode::Normal,
             streaming: false,

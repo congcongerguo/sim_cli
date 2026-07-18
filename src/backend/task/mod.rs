@@ -45,7 +45,7 @@ pub const fn cmd(name: &'static str, desc: &'static str) -> CommandDef {
 #[derive(Debug, Clone)]
 pub struct TaskSnapshot {
     pub name: String,
-    pub messages: Vec<Message>,
+    pub messages: Arc<Vec<Message>>,
     pub evicted_lines: u64,
     pub model: String,
     pub conn: ConnState,
