@@ -124,7 +124,7 @@ pub fn spawn_actor(actor: impl TaskActor) -> TaskHandle {
     let (state_tx, state_rx) = watch::channel(snapshot);
 
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(Duration::from_secs(1));
+        let mut tick = tokio::time::interval(Duration::from_millis(500));
         let mut push = tokio::time::interval(Duration::from_millis(100));
         let mut actor = actor;
 
