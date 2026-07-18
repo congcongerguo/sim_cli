@@ -11,9 +11,6 @@ use tokio::sync::{mpsc, watch};
 use tui_textarea::{Input, Key, TextArea};
 
 use crate::backend::{Command, ModalChoice, Mode, ViewState};
-use crate::commands::{
-    self, Action, CommandSpec, CompletionCtx, ModelChoice, ParseError, PlanToggle, COMMANDS,
-};
 const PLACEHOLDER: &str = "command (Tab to complete, Enter to run)";
 
 #[derive(Debug, Default)]
@@ -167,36 +164,39 @@ impl Frontend {
         }
     }
 
-    pub fn menu_items(&self) -> Vec<(&'static str, &'static str)> {
-        let task = Some(self.view.active_task.as_str());
-        match commands::completion_ctx(&self.current_text()) {
-            CompletionCtx::Command { prefix } => commands::matching_commands(&prefix, task),
-            CompletionCtx::Sub { cmd, prefix } => commands::matching_subs(cmd, &prefix),
-            CompletionCtx::None => Vec::new(),
+    pub fn menu_items(&self) -> Vec<(String, String)> {
+        let text = self.current_text();
+        let trimmed = text.trim();
+        if trimmed.is_empty() {
+            return vec![];
         }
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        let prefix = parts[0];
+        // Filter active task's commands by prefix
+        self.view.active_commands.iter()
+            .filter(|c| c.name.starts_with(prefix))
+            .map(|c| (c.name.to_string(), c.desc.to_string()))
+            .collect()
     }
 
     pub fn menu_title(&self) -> Option<String> {
-        match commands::completion_ctx(&self.current_text()) {
-            CompletionCtx::Command { .. } => Some("commands".into()),
-            CompletionCtx::Sub { cmd, .. } => Some(format!("{} <arg>", cmd.name)),
-            CompletionCtx::None => None,
-        }
+        let menu = self.menu_items();
+        if menu.is_empty() { None } else { Some("commands".into()) }
     }
 
     pub fn input_state(&self) -> InputState {
         let current = self.current_text();
-        let trimmed = current.trim();
-        if trimmed.is_empty() {
+        if current.trim().is_empty() {
             return InputState::Empty;
         }
-        match commands::parse_action(trimmed, Some(&self.view.active_task)) {
-            Ok(_) => InputState::Resolvable,
-            Err(ParseError::MissingArg(_)) => InputState::MissingArg,
-            Err(ParseError::AmbiguousCommand(_)) | Err(ParseError::AmbiguousArg(_, _)) => {
-                InputState::Ambiguous
-            }
-            Err(_) => InputState::Unknown,
+        let parts: Vec<&str> = current.trim().split_whitespace().collect();
+        let matches: Vec<_> = self.view.active_commands.iter()
+            .filter(|c| c.name.starts_with(parts[0]))
+            .collect();
+        match matches.len() {
+            0 => InputState::Unknown,
+            1 => InputState::Resolvable,
+            _ => InputState::Ambiguous,
         }
     }
 
@@ -205,25 +205,21 @@ impl Frontend {
     }
 
     fn tab_next(&mut self) {
-        if self.view.tasks.len() <= 1 {
-            return;
-        }
+        if self.view.tasks.len() <= 1 { return; }
         let next = (self.view.active_task_index + 1) % self.view.tasks.len();
         let name = self.view.tasks[next].name.clone();
-        self.send(Command::Run(Action::TaskSwitch(name)));
+        self.send(Command::TagSwitch(name));
     }
 
     fn tab_prev(&mut self) {
-        if self.view.tasks.len() <= 1 {
-            return;
-        }
+        if self.view.tasks.len() <= 1 { return; }
         let prev = if self.view.active_task_index == 0 {
             self.view.tasks.len() - 1
         } else {
             self.view.active_task_index - 1
         };
         let name = self.view.tasks[prev].name.clone();
-        self.send(Command::Run(Action::TaskSwitch(name)));
+        self.send(Command::TagSwitch(name));
     }
 
     fn on_key(&mut self, key: KeyEvent) {
@@ -235,7 +231,7 @@ impl Frontend {
         match (key.code, key.modifiers) {
             (KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                 if self.input.lines().iter().all(|l| l.is_empty()) {
-                    self.send(Command::Run(Action::Exit));
+                    self.send(Command::Input("exit".into()));
                 } else {
                     self.replace_input("");
                     self.tab_cycle = None;
@@ -268,47 +264,28 @@ impl Frontend {
                 return;
             }
             (KeyCode::Char('g'), KeyModifiers::CONTROL) => {
-                self.run_hotkey(Action::Help);
+                self.run_hotkey("help");
                 return;
             }
             (KeyCode::Char('l'), KeyModifiers::CONTROL) => {
-                self.run_hotkey(Action::Clear);
+                self.run_hotkey("clear");
                 return;
             }
             (KeyCode::Char('q'), KeyModifiers::CONTROL) => {
-                self.send(Command::Run(Action::Exit));
+                self.send(Command::Input("exit".into()));
                 return;
             }
             (KeyCode::Char('p'), KeyModifiers::CONTROL) => {
-                let next = if self.view.mode == Mode::Plan {
-                    PlanToggle::Off
-                } else {
-                    PlanToggle::On
-                };
-                self.run_hotkey(Action::Plan(next));
+                let next = if self.view.mode == Mode::Plan { "off" } else { "on" };
+                self.run_hotkey(&format!("plan {next}"));
                 return;
             }
             (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
-                let order = [ModelChoice::Claude, ModelChoice::Opus, ModelChoice::Haiku];
+                let order = ["claude", "opus", "haiku"];
                 let cur = &self.view.model;
-                let i = order.iter().position(|m| m.slug() == cur.as_str()).unwrap_or(0);
+                let i = order.iter().position(|m| m == &cur.as_str()).unwrap_or(0);
                 let next = order[(i + 1) % order.len()];
-                self.run_hotkey(Action::Model(next));
-                return;
-            }
-            #[cfg(feature = "mock-llm")]
-            (KeyCode::Char('e'), KeyModifiers::CONTROL) => {
-                if self.view.streaming {
-                    return;
-                }
-                let order = [
-                    crate::commands::DemoScenario::Chat,
-                    crate::commands::DemoScenario::Code,
-                    crate::commands::DemoScenario::Tool,
-                ];
-                let pick = order[self.demo_idx % order.len()];
-                self.demo_idx = (self.demo_idx + 1) % order.len();
-                self.run_hotkey(Action::Demo(pick));
+                self.run_hotkey(&format!("model {next}"));
                 return;
             }
             (KeyCode::Char('s'), KeyModifiers::CONTROL) => {
@@ -466,84 +443,29 @@ impl Frontend {
     }
 
     fn handle_tab(&mut self) {
-        if let Some(cycle) = self.tab_cycle.as_mut() {
-            if !cycle.names.is_empty() {
-                cycle.idx = (cycle.idx + 1) % cycle.names.len();
-                let new_text = format!("{}{}", cycle.head, cycle.names[cycle.idx]);
+        let menu = self.menu_items();
+        if menu.len() == 1 {
+            let text = menu[0].0.clone();
+            self.replace_input(&text);
+            self.menu_idx = 0;
+            self.tab_cycle = None;
+        } else if menu.len() > 1 {
+            if let Some(cycle) = self.tab_cycle.as_mut() {
+                cycle.idx = (cycle.idx + 1) % menu.len();
                 self.menu_idx = cycle.idx;
-                self.replace_input(&new_text);
-                return;
-            }
-        }
-
-        let current = self.current_text();
-        let ctx = commands::completion_ctx(&current);
-
-        match ctx {
-            CompletionCtx::None => {}
-            CompletionCtx::Command { prefix } => {
-                let names: Vec<&'static str> = COMMANDS
-                    .iter()
-                    .filter(|c| c.name.starts_with(&prefix))
-                    .map(|c| c.name)
-                    .collect();
-                self.tab_complete(&"".to_string(), &prefix, &names, |def_idx| {
-                    let name = names.get(def_idx).copied();
-                    name.and_then(commands::find_command)
-                        .map(|c| !c.subs.is_empty())
-                        .unwrap_or(false)
+                let text = menu[cycle.idx].0.clone();
+                drop(cycle);
+                self.replace_input(&text);
+            } else {
+                self.tab_cycle = Some(TabCycle {
+                    names: menu.iter().map(|(n, _)| n.clone()).collect(),
+                    head: String::new(),
+                    idx: 0,
                 });
-            }
-            CompletionCtx::Sub { cmd, prefix } => {
-                let names: Vec<&'static str> = cmd
-                    .subs
-                    .iter()
-                    .filter(|s| s.name.starts_with(&prefix))
-                    .map(|s| s.name)
-                    .collect();
-                let head = build_sub_head(&current, cmd);
-                self.tab_complete(&head, &prefix, &names, |_| false);
+                let text = menu[0].0.clone();
+                self.replace_input(&text);
             }
         }
-    }
-
-    fn tab_complete<F: Fn(usize) -> bool>(
-        &mut self,
-        head: &str,
-        prefix: &str,
-        names: &[&'static str],
-        should_append_space: F,
-    ) {
-        if names.is_empty() {
-            return;
-        }
-        if names.len() == 1 {
-            let mut text = format!("{}{}", head, names[0]);
-            if should_append_space(0) {
-                text.push(' ');
-            }
-            self.replace_input(&text);
-            self.menu_idx = 0;
-            self.tab_cycle = None;
-            return;
-        }
-        let lcp = commands::longest_common_prefix(names);
-        if lcp.len() > prefix.len() {
-            let text = format!("{head}{lcp}");
-            self.replace_input(&text);
-            self.menu_idx = 0;
-            self.tab_cycle = None;
-            return;
-        }
-        let pick = names[0].to_string();
-        let text = format!("{head}{pick}");
-        self.replace_input(&text);
-        self.menu_idx = 0;
-        self.tab_cycle = Some(TabCycle {
-            names: names.iter().map(|s| s.to_string()).collect(),
-            head: head.to_string(),
-            idx: 0,
-        });
     }
 
     fn submit(&mut self, text: String) {
@@ -553,7 +475,6 @@ impl Frontend {
         self.scroll.set(0);
         self.history_cursor = None;
 
-        // Push to history (deduplicate consecutive identical entries)
         if self.history.last().map_or(true, |last| last != &text) {
             self.history.push(text.clone());
             if self.history.len() > 1000 {
@@ -561,28 +482,18 @@ impl Frontend {
             }
         }
 
-        match commands::parse_action(&text, Some(&self.view.active_task)) {
-            Ok(action) => {
-                self.replace_input("");
-                self.send(Command::Run(action));
-            }
-            Err(err) => {
-                self.replace_input("");
-                self.send(Command::ShowSystem(err.to_string()));
-            }
-        }
+        self.replace_input("");
+        self.send(Command::Input(text));
     }
 
-    fn run_hotkey(&mut self, action: Action) {
+    fn run_hotkey(&mut self, text: &str) {
         self.replace_input("");
         self.tab_cycle = None;
         self.menu_idx = 0;
         self.follow_tail = true;
         self.scroll.set(0);
-        self.send(Command::Run(action));
+        self.send(Command::Input(text.to_string()));
     }
 }
 
-fn build_sub_head(_input: &str, cmd: &CommandSpec) -> String {
-    format!("{} ", cmd.name)
-}
+// (removed unused build_sub_head)

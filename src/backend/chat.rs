@@ -23,6 +23,10 @@ impl ChatState {
         }
     }
 
+    pub fn push_message(&mut self, msg: Message) {
+        self.messages.push(msg);
+    }
+
     pub fn push_system(&mut self, text: impl Into<String>, level: LogLevel) {
         self.messages.push(Message::System { text: text.into(), level });
     }
