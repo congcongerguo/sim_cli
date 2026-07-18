@@ -4,9 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = ["zmq"]
+default = ["zmq", "conn-task", "demo-task"]
 zmq = ["dep:zeromq", "dep:prost"]
 mock-llm = []
+conn-task = []
+demo-task = []
 
 [dependencies]
 ratatui = "0.29"

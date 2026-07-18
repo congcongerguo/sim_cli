@@ -71,10 +71,10 @@ pub struct Router {
 
 impl Router {
     pub fn new(model: String) -> Self {
-        let tasks: Vec<TaskRuntime> = TASK_DEFS.iter().map(|def| {
+        let tasks: Vec<TaskRuntime> = TASK_DEFS.iter().filter_map(|def| {
             task::create_actor(def.name, model.clone(), def)
-                .unwrap_or_else(|| panic!("unknown task type: {}", def.name))
         }).collect();
+        assert!(!tasks.is_empty(), "no task actors created — check features and tasks.toml");
         Self { tasks, active: 0, should_quit: false, modal: modal::ModalSubsystem::new() }
     }
 

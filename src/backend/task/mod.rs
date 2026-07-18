@@ -1,6 +1,11 @@
 //! Task actor framework: trait, harness, and shared types.
+//!
+//! Each task type is behind its own feature flag. Disable a feature to
+//! completely exclude that task's code from the binary.
 
+#[cfg(feature = "conn-task")]
 pub mod conn_actor;
+#[cfg(feature = "demo-task")]
 pub mod demo_actor;
 pub mod registry;
 
@@ -167,9 +172,9 @@ pub struct TaskRuntime {
 /// Look up the actor factory for `name` and call it.
 /// Add a new branch here when adding a new task type.
 pub fn create_actor(name: &str, model: String, def: &'static TaskDef) -> Option<TaskRuntime> {
-    match name {
-        "conn" => Some(conn_actor::create(model, def)),
-        "demo" => Some(demo_actor::create(model, def)),
-        _ => None,
-    }
+    #[cfg(feature = "conn-task")]
+    if name == "conn" { return Some(conn_actor::create(model, def)); }
+    #[cfg(feature = "demo-task")]
+    if name == "demo" { return Some(demo_actor::create(model, def)); }
+    None
 }
