@@ -327,8 +327,12 @@ impl Frontend {
                 let max_scroll = self.prev_total_lines.get()
                     .saturating_sub(self.viewport_height.get().max(1));
                 let cur = if self.follow_tail.get() {
-                    // First detach from bottom: start one page up from the end.
-                    max_scroll.saturating_sub(step)
+                    // First detach from bottom: scroll_offset must be an
+                    // absolute line number (from the very first message).
+                    // Bottom absolute = evicted_lines + max_scroll.
+                    let evicted = self.view.evicted_lines as u16;
+                    let bottom_abs = evicted.saturating_add(max_scroll);
+                    bottom_abs.saturating_sub(step)
                 } else {
                     // Already detached: go further up.
                     self.scroll.get().saturating_sub(step)
@@ -341,14 +345,13 @@ impl Frontend {
                 let step = self.viewport_height.get().max(1);
                 let max_scroll = self.prev_total_lines.get()
                     .saturating_sub(self.viewport_height.get().max(1));
-                let cur = if self.follow_tail.get() {
-                    // At bottom, scrolling down does nothing.
+                if self.follow_tail.get() {
                     return;
-                } else {
-                    self.scroll.get().saturating_add(step)
-                };
-                if cur >= max_scroll {
-                    // Reached the bottom: switch to follow mode.
+                }
+                let cur = self.scroll.get().saturating_add(step);
+                let evicted = self.view.evicted_lines as u16;
+                let bottom_abs = evicted.saturating_add(max_scroll);
+                if cur >= bottom_abs {
                     self.follow_tail.set(true);
                     self.scroll.set(0);
                 } else {
