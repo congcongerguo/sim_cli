@@ -595,8 +595,6 @@ impl Frontend {
     fn submit(&mut self, text: String) {
         self.tab_cycle = None;
         self.menu_idx = 0;
-        self.follow_tail.set(true);
-        self.scroll.set(0);
         self.history_cursor = None;
 
         // Ambiguous → auto-complete instead of submitting
@@ -623,8 +621,6 @@ impl Frontend {
         self.replace_input("");
         self.tab_cycle = None;
         self.menu_idx = 0;
-        self.follow_tail.set(true);
-        self.scroll.set(0);
         self.send(Command::Input(text.to_string()));
     }
 }
