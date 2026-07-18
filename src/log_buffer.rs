@@ -7,14 +7,21 @@ use crate::message::Message;
 
 pub const DEFAULT_MAX: usize = 100;
 
-/// How many render lines a message produces.
+/// How many render lines a message produces. Must match conversation.rs rendering.
 pub fn msg_line_count(msg: &Message) -> u64 {
     match msg {
         Message::Assistant { text, streaming } => {
-            let n = text.lines().count() as u64;
+            let n = if text.is_empty() && !*streaming { 0 } else { text.lines().count() as u64 };
             if *streaming { n + 1 } else { n }
         }
-        Message::Tool(_t) => 3,
+        Message::Tool(t) => {
+            // Matches tool_card_lines: 1 title + args_preview lines
+            // + (1 sep + output lines if output non-empty) + 1 closing border
+            let args = t.args_preview.lines().count() as u64;
+            let out = if t.output.is_empty() { 0 }
+                      else { 1 + t.output.lines().count() as u64 };
+            1 + args + out + 1
+        }
         Message::System { text, .. } => text.lines().count() as u64,
     }
 }
@@ -306,6 +313,22 @@ mod tests {
         buf.push(msg("triggers eviction")); // evicts first msg
         assert_eq!(buf.evicted_lines(), 1, "evicted_lines must count lines, not entries");
         assert_eq!(buf.evicted_entries(), 1, "evicted_entries must count entries");
+    }
+
+    #[test]
+    fn tool_line_count_varies_with_content() {
+        use crate::message::{ToolCall, ToolStatus};
+        let empty_tool = Message::Tool(ToolCall {
+            name: "ls".into(), args_preview: String::new(),
+            status: ToolStatus::Running, output: String::new(),
+        });
+        assert_eq!(msg_line_count(&empty_tool), 2); // border only
+        let rich_tool = Message::Tool(ToolCall {
+            name: "ls".into(), args_preview: "-la\n/home".into(),
+            status: ToolStatus::Done, output: "file1\nfile2\nfile3".into(),
+        });
+        // 1 title + 2 args + 1 sep + 3 output + 1 closing = 8
+        assert_eq!(msg_line_count(&rich_tool), 8);
     }
 
     #[test]

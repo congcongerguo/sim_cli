@@ -325,8 +325,8 @@ impl Frontend {
             }
             (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {
                 let step = self.viewport_height.get().max(1);
-                let max_scroll = self.prev_total_lines.get()
-                    .saturating_sub(self.viewport_height.get().max(1));
+                let total = self.view.buffer_total_lines.min(u16::MAX as u64) as u16;
+                let max_scroll = total.saturating_sub(self.viewport_height.get().max(1));
                 let cur = if self.follow_tail.get() {
                     // First detach from bottom: scroll_offset must be an
                     // absolute line number (from the very first message).
@@ -344,8 +344,8 @@ impl Frontend {
             }
             (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
                 let step = self.viewport_height.get().max(1);
-                let max_scroll = self.prev_total_lines.get()
-                    .saturating_sub(self.viewport_height.get().max(1));
+                let total = self.view.buffer_total_lines.min(u16::MAX as u64) as u16;
+                let max_scroll = total.saturating_sub(self.viewport_height.get().max(1));
                 if self.follow_tail.get() {
                     return;
                 }
