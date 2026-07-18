@@ -348,7 +348,9 @@ impl Frontend {
                 let cur = self.scroll.get().saturating_add(step);
                 let evicted = self.view.evicted_lines as u32;
                 let bottom_abs = evicted.saturating_add(max_scroll);
-                if cur >= bottom_abs {
+                // Use a slack of 1 step so a tick arriving between key press
+                // and render doesn't keep us one line short of the bottom.
+                if cur + step >= bottom_abs {
                     self.follow_tail.set(true);
                     self.scroll.set(0);
                 } else {
