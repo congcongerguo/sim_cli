@@ -1,32 +1,23 @@
-use std::cell::Cell;
-
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
-use crate::backend::{Mode, ViewState};
+use crate::backend::Mode;
 use crate::message::{LogLevel, Message};
+use crate::ui::render_state::RenderState;
 use crate::ui::tool_card::tool_card_lines;
 
-pub fn render(
-    f: &mut Frame,
-    area: Rect,
-    view: &ViewState,
-    scroll: &Cell<u16>,
-    follow_tail: bool,
-    prev_total_lines: &Cell<u16>,
-) {
+pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState, visible: u16) -> u16 {
     let mut all: Vec<Line<'static>> = Vec::new();
 
-    for msg in view.messages.iter() {
+    for msg in state.messages.iter() {
         match msg {
             Message::Assistant { text, streaming } => {
                 if text.is_empty() && !*streaming {
                     continue;
                 }
-                // Plain text rendering — no markdown.
                 for line in text.lines() {
                     all.push(Line::from(Span::styled(
                         line.to_string(),
@@ -36,9 +27,7 @@ pub fn render(
                 if *streaming {
                     all.push(Line::from(Span::styled(
                         "▌",
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::SLOW_BLINK),
+                        Style::default().fg(Color::Cyan).add_modifier(Modifier::SLOW_BLINK),
                     )));
                 }
                 all.push(Line::from(""));
@@ -52,10 +41,7 @@ pub fn render(
             Message::System { text, level } => {
                 let color = log_level_color(*level);
                 for line in text.lines() {
-                    all.push(Line::from(Span::styled(
-                        line.to_string(),
-                        Style::default().fg(color),
-                    )));
+                    all.push(Line::from(Span::styled(line.to_string(), Style::default().fg(color))));
                 }
                 all.push(Line::from(""));
             }
@@ -66,68 +52,40 @@ pub fn render(
         all.pop();
     }
 
-    let mode_label = match view.mode {
+    let total_lines = all.len() as u16;
+    let mode_label = match state.mode {
         Mode::Normal => "normal",
         Mode::Plan => "plan",
     };
 
-    let border_color = task_border_color(&view.active_task);
-    let title = format!(
-        " {} · {} · {} ",
-        view.active_task, view.model, mode_label
-    );
+    let border_color = task_border_color(&state.active_task);
+    let title = format!(" {} · {} · {} ", state.active_task, state.model, mode_label);
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color))
-        .title(Span::styled(
-            title,
-            Style::default()
-                .fg(border_color)
-                .add_modifier(Modifier::BOLD),
-        ));
+        .title(Span::styled(title, Style::default().fg(border_color).add_modifier(Modifier::BOLD)));
 
-    let inner = block.inner(area);
-    let total_lines = all.len() as u16;
-    let visible = inner.height;
-
-    if !follow_tail {
-        let prev = prev_total_lines.get();
-        if total_lines > prev {
-            let delta = total_lines - prev;
-            scroll.set(scroll.get().saturating_add(delta));
-        }
-    }
-    prev_total_lines.set(total_lines);
-
-    let cur_scroll = scroll.get();
+    let _inner = block.inner(area);
     let max_scroll = total_lines.saturating_sub(visible);
-    let final_scroll = if follow_tail {
+    let scroll = if state.follow_tail {
         max_scroll
     } else {
-        max_scroll.saturating_sub(cur_scroll)
+        let cur = state.scroll_offset;
+        max_scroll.saturating_sub(cur)
     };
 
-    let para = Paragraph::new(all)
-        .block(block)
-        .wrap(Wrap { trim: false })
-        .scroll((final_scroll, 0));
+    let para = Paragraph::new(all).block(block).wrap(Wrap { trim: false }).scroll((scroll, 0));
     f.render_widget(para, area);
 
-    if !follow_tail && total_lines > visible {
+    if !state.follow_tail && total_lines > visible {
         let hint = " ▲ scrolled — PgDn to follow ";
         let hint_x = area.x + area.width.saturating_sub(hint.len() as u16 + 2);
-        let hint_area = Rect {
-            x: hint_x,
-            y: area.y,
-            width: hint.len() as u16,
-            height: 1,
-        };
-        let p = Paragraph::new(Span::styled(
-            hint,
-            Style::default().bg(Color::Yellow).fg(Color::Black),
-        ));
+        let hint_area = Rect { x: hint_x, y: area.y, width: hint.len() as u16, height: 1 };
+        let p = Paragraph::new(Span::styled(hint, Style::default().bg(Color::Yellow).fg(Color::Black)));
         f.render_widget(p, hint_area);
     }
+
+    total_lines
 }
 
 fn log_level_color(level: LogLevel) -> Color {

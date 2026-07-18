@@ -3,11 +3,15 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
+use chrono::{DateTime, Local};
 use serde_json::Value;
 
-use crate::backend::ViewState;
-
-pub fn render(f: &mut Frame, area: Rect, view: &ViewState) {
+pub fn render(
+    f: &mut Frame,
+    area: Rect,
+    latest_recv: &Option<Value>,
+    latest_recv_at: &Option<DateTime<Local>>,
+) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray))
@@ -27,7 +31,7 @@ pub fn render(f: &mut Frame, area: Rect, view: &ViewState) {
 
     let mut lines: Vec<Line<'static>> = Vec::new();
 
-    match &view.latest_recv {
+    match latest_recv {
         None => {
             lines.push(Line::from(Span::styled(
                 "(no data yet)",
@@ -69,7 +73,7 @@ pub fn render(f: &mut Frame, area: Rect, view: &ViewState) {
         }
     }
 
-    if let Some(ts) = view.latest_recv_at {
+    if let Some(ts) = latest_recv_at {
         let avail = inner.height as usize;
         if avail > 0 && lines.len() + 2 <= avail {
             while lines.len() + 2 < avail {

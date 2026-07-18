@@ -14,8 +14,6 @@ use crate::backend::{Command, ModalChoice, Mode, ViewState};
 use crate::commands::{
     self, Action, CommandSpec, CompletionCtx, ModelChoice, ParseError, PlanToggle, COMMANDS,
 };
-use crate::ui;
-
 const PLACEHOLDER: &str = "command (Tab to complete, Enter to run)";
 
 #[derive(Debug, Default)]
@@ -78,10 +76,53 @@ impl Frontend {
         }
     }
 
+    pub fn build_render_state(&self) -> crate::ui::render_state::RenderState {
+        use crate::ui::render_state::RenderState;
+        let menu = self.menu_items();
+        RenderState {
+            messages: self.view.messages.clone(),
+            model: self.view.model.clone(),
+            mode: self.view.mode,
+            streaming: self.view.streaming,
+            conn: self.view.conn.clone(),
+            tasks: self.view.tasks.clone(),
+            active_task_index: self.view.active_task_index,
+            active_task: self.view.active_task.clone(),
+            latest_recv: self.view.latest_recv.clone(),
+            latest_recv_at: self.view.latest_recv_at,
+            input_text: self.current_text(),
+            input_cursor: (0, 0),
+            input_state: self.input_state(),
+            menu_items: menu.into_iter().map(|(a, b)| (a.to_string(), b.to_string())).collect(),
+            menu_idx: self.menu_idx,
+            menu_title: self.menu_title(),
+            scroll_offset: self.scroll.get(),
+            follow_tail: self.follow_tail,
+            prev_total_lines: self.prev_total_lines.get(),
+            panel_visible: self.panel_visible,
+            modal_request: self.view.modal.clone(),
+            modal_selected: self.modal_selected,
+        }
+    }
+
+    fn apply_output(&self, out: &crate::ui::render_state::RenderOutput) {
+        self.viewport_height.set(out.viewport_height);
+        self.prev_total_lines.set(out.total_lines);
+    }
+
     pub async fn run<B: Backend>(&mut self, term: &mut Terminal<B>) -> Result<()> {
         let mut events = EventStream::new();
         loop {
-            term.draw(|f| ui::render(f, self))?;
+            let state = self.build_render_state();
+            let mut render_out = crate::ui::render_state::RenderOutput {
+                viewport_height: self.viewport_height.get(),
+                total_lines: self.prev_total_lines.get(),
+            };
+            term.draw(|f| {
+                render_out = crate::ui::ratatui_renderer::RatatuiRenderer::draw(f, &state);
+            })?;
+            self.apply_output(&render_out);
+
             tokio::select! {
                 maybe = events.next() => match maybe {
                     Some(Ok(CtEvent::Key(k))) if k.kind == KeyEventKind::Press => {
