@@ -40,6 +40,7 @@ pub fn run_action(b: &mut Backend, action: Action) {
                 .chat
                 .push_system(format!("mode -> {mode}"), LogLevel::Notice);
         }
+        #[cfg(feature = "mock-llm")]
         Action::Demo(s) => {
             let chat = &mut b.tasks.active_mut().chat;
             b.llm.start_demo(s, chat);
@@ -49,6 +50,7 @@ pub fn run_action(b: &mut Backend, action: Action) {
             let def = crate::backend::TaskDef::find(task.name.as_str());
             let addr: &str = match p {
                 Protocol::Tcp => def.map_or("127.0.0.1:7878", |d| d.tcp_addr()),
+                #[cfg(feature = "zmq")]
                 Protocol::Zmq => def.map_or("tcp://127.0.0.1:5555", |d| d.zmq_sub_addr()),
             };
             let outs = b.tasks.active_mut().conn.connect(p, addr);

@@ -1,8 +1,10 @@
 use tokio::sync::mpsc;
 
+#[cfg(feature = "mock-llm")]
 use crate::commands::DemoScenario;
 use crate::event::LlmEvent;
 use crate::message::Message;
+#[cfg(feature = "mock-llm")]
 use crate::mock_llm::{self, Scenario};
 
 use super::chat::ChatState;
@@ -15,6 +17,7 @@ const CHANNEL_BUFFER: usize = 64;
 /// representation.
 pub struct LlmSubsystem {
     pub streaming: bool,
+    #[allow(dead_code)]
     tx: mpsc::Sender<LlmEvent>,
     pub rx: mpsc::Receiver<LlmEvent>,
 }
@@ -25,6 +28,7 @@ impl LlmSubsystem {
         Self { streaming: false, tx, rx }
     }
 
+    #[cfg(feature = "mock-llm")]
     pub fn start_demo(&mut self, scenario: DemoScenario, chat: &mut ChatState) {
         chat.messages.push(Message::Assistant {
             text: String::new(),
@@ -62,6 +66,7 @@ impl LlmSubsystem {
     }
 }
 
+#[cfg(feature = "mock-llm")]
 fn map_scenario(d: DemoScenario) -> Scenario {
     match d {
         DemoScenario::Chat => Scenario::Chat,

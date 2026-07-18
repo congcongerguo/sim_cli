@@ -22,6 +22,7 @@ pub struct TaskDef {
     pub border_color: (u8, u8, u8),
     /// Per-task transport addresses. `None` = use the global default.
     pub tcp_addr: Option<&'static str>,
+    #[allow(dead_code)]
     pub zmq_sub_addr: Option<&'static str>,
     #[allow(dead_code)]
     pub zmq_pub_addr: Option<&'static str>,
@@ -31,6 +32,7 @@ impl TaskDef {
     pub fn tcp_addr(&self) -> &str {
         self.tcp_addr.unwrap_or("127.0.0.1:7878")
     }
+    #[allow(dead_code)]
     pub fn zmq_sub_addr(&self) -> &str {
         self.zmq_sub_addr.unwrap_or("tcp://127.0.0.1:5555")
     }

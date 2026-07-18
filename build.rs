@@ -2,10 +2,12 @@ use std::io::Result;
 use std::{fs, path::Path};
 
 fn main() -> Result<()> {
-    // prost-build shells out to the system `protoc`.
-    prost_build::Config::new()
-        .compile_protos(&["proto/sim.proto"], &["proto"])?;
-    println!("cargo:rerun-if-changed=proto/sim.proto");
+    #[cfg(feature = "zmq")]
+    {
+        prost_build::Config::new()
+            .compile_protos(&["proto/sim.proto"], &["proto"])?;
+        println!("cargo:rerun-if-changed=proto/sim.proto");
+    }
 
     // Generate TASK_DEFS from tasks.toml.
     let tasks_toml = Path::new("tasks.toml");

@@ -40,6 +40,7 @@ pub struct Frontend {
     pub(crate) follow_tail: bool,
     pub(crate) menu_idx: usize,
     pub(crate) tab_cycle: Option<TabCycle>,
+    #[allow(dead_code)]
     pub(crate) demo_idx: usize,
     pub(crate) modal_selected: usize,
     pub view: ViewState,
@@ -254,6 +255,7 @@ impl Frontend {
                 self.run_hotkey(Action::Model(next));
                 return;
             }
+            #[cfg(feature = "mock-llm")]
             (KeyCode::Char('e'), KeyModifiers::CONTROL) => {
                 if self.view.streaming {
                     return;

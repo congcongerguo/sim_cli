@@ -195,7 +195,9 @@ pub async fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::{DemoScenario, PlanToggle};
+    use crate::commands::PlanToggle;
+    #[cfg(feature = "mock-llm")]
+    use crate::commands::DemoScenario;
     use crate::event::LlmEvent;
     use crate::message::ToolStatus;
 
@@ -208,6 +210,7 @@ mod tests {
         assert_eq!(b.snapshot().mode, Mode::Normal);
     }
 
+    #[cfg(feature = "mock-llm")]
     #[tokio::test]
     async fn demo_action_marks_streaming_and_appends_assistant() {
         let mut b = Backend::new("mock-claude".into());
@@ -220,6 +223,7 @@ mod tests {
         ));
     }
 
+    #[cfg(feature = "mock-llm")]
     #[tokio::test]
     async fn done_event_clears_streaming() {
         let mut b = Backend::new("mock-claude".into());

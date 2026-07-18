@@ -1,4 +1,5 @@
 pub mod tcp;
+#[cfg(feature = "zmq")]
 pub mod zmq;
 
 pub use crate::json_framer::JsonFramer;
@@ -7,6 +8,7 @@ use tokio::sync::mpsc;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Protocol {
     Tcp,
+    #[cfg(feature = "zmq")]
     Zmq,
 }
 
@@ -14,6 +16,7 @@ impl Protocol {
     pub fn as_str(&self) -> &'static str {
         match self {
             Protocol::Tcp => "tcp",
+            #[cfg(feature = "zmq")]
             Protocol::Zmq => "zmq",
         }
     }
@@ -21,6 +24,7 @@ impl Protocol {
     pub fn from_name(name: &str) -> Option<Protocol> {
         match name {
             "tcp" => Some(Protocol::Tcp),
+            #[cfg(feature = "zmq")]
             "zmq" => Some(Protocol::Zmq),
             _ => None,
         }
@@ -53,6 +57,7 @@ pub fn spawn(
 ) -> TransportHandle {
     match protocol {
         Protocol::Tcp => tcp::spawn(addr, ev_tx),
+        #[cfg(feature = "zmq")]
         Protocol::Zmq => zmq::spawn(addr, ev_tx),
     }
 }

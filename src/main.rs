@@ -5,6 +5,7 @@ mod frontend;
 mod help;
 mod json_framer;
 mod message;
+#[cfg(feature = "mock-llm")]
 mod mock_llm;
 mod proto;
 mod terminal;

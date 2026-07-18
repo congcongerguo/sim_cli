@@ -36,6 +36,7 @@ pub enum PlanToggle {
     Off,
 }
 
+#[cfg(feature = "mock-llm")]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DemoScenario {
     Chat,
@@ -54,6 +55,7 @@ pub enum Action {
     Exit,
     Model(ModelChoice),
     Plan(PlanToggle),
+    #[cfg(feature = "mock-llm")]
     Demo(DemoScenario),
     Connect(Protocol),
     Disconnect,
@@ -98,15 +100,21 @@ const PLAN_SUBS: &[SubSpec] = &[
     SubSpec { name: "off", desc: "disable plan mode" },
 ];
 
+#[cfg(feature = "mock-llm")]
 const DEMO_SUBS: &[SubSpec] = &[
-    SubSpec { name: "chat", desc: "stream a markdown chat reply" },
-    SubSpec { name: "code", desc: "stream a syntect-highlighted code reply" },
+    SubSpec { name: "chat", desc: "stream a chat reply" },
+    SubSpec { name: "code", desc: "stream a code reply" },
     SubSpec { name: "tool", desc: "show a tool card with permission modal" },
 ];
 
+#[cfg(feature = "zmq")]
 const CON_SUBS: &[SubSpec] = &[
-    SubSpec { name: "tcp", desc: "TCP echo (127.0.0.1:7878)" },
-    SubSpec { name: "zmq", desc: "ZMQ pub/sub (sub tcp://127.0.0.1:5555 / pub tcp://127.0.0.1:5556)" },
+    SubSpec { name: "tcp", desc: "TCP echo" },
+    SubSpec { name: "zmq", desc: "ZMQ pub/sub" },
+];
+#[cfg(not(feature = "zmq"))]
+const CON_SUBS: &[SubSpec] = &[
+    SubSpec { name: "tcp", desc: "TCP echo" },
 ];
 
 pub static COMMANDS: &[CommandSpec] = &[
@@ -140,6 +148,7 @@ pub static COMMANDS: &[CommandSpec] = &[
         subs: PLAN_SUBS,
         build: |s| Ok(Action::Plan(parse_plan(s.ok_or_else(|| ParseError::InternalDrift("missing sub".into()))?)?)),
     },
+    #[cfg(feature = "mock-llm")]
     CommandSpec {
         name: "demo",
         desc: "show a UI demo: demo <chat|code|tool>",
@@ -195,6 +204,7 @@ fn parse_plan(s: &str) -> Result<PlanToggle, ParseError> {
     }
 }
 
+#[cfg(feature = "mock-llm")]
 fn parse_demo(s: &str) -> Result<DemoScenario, ParseError> {
     match s {
         "chat" => Ok(DemoScenario::Chat),
@@ -508,10 +518,13 @@ mod tests {
         assert_unique(Action::Plan(PlanToggle::On), "plan on");
         assert_unique(Action::Plan(PlanToggle::On), "p on");
         assert_unique(Action::Plan(PlanToggle::Off), "plan of");
+        #[cfg(feature = "mock-llm")]
         assert_unique(Action::Demo(DemoScenario::Chat), "demo chat");
+        #[cfg(feature = "mock-llm")]
         assert_unique(Action::Demo(DemoScenario::Code), "d co");
         assert_unique(Action::Model(ModelChoice::Haiku), "m h");
         assert_unique(Action::Connect(Protocol::Tcp), "con tcp");
+        #[cfg(feature = "zmq")]
         assert_unique(Action::Connect(Protocol::Zmq), "con zmq");
     }
 
@@ -524,6 +537,7 @@ mod tests {
             }
             other => panic!("expected AmbiguousArg, got {other:?}"),
         }
+        #[cfg(feature = "mock-llm")]
         match parse("demo c") {
             Err(ParseError::AmbiguousArg(cmd, list)) => {
                 assert_eq!(cmd.name, "demo");
@@ -631,6 +645,7 @@ mod tests {
         let err = parse_action("con tcp", Some("demo")).unwrap_err();
         assert!(matches!(err, ParseError::CommandNotAllowed(_, _)));
         assert!(parse_action("model claude", Some("main")).is_ok());
+        #[cfg(feature = "mock-llm")]
         assert!(parse_action("demo chat", Some("main")).is_ok());
     }
 
