@@ -61,7 +61,7 @@ impl ConnSubsystem {
         }
     }
 
-    pub fn connect(&mut self, protocol: Protocol) -> Vec<ConnOutcome> {
+    pub fn connect(&mut self, protocol: Protocol, addr: &str) -> Vec<ConnOutcome> {
         if matches!(
             self.conn,
             ConnState::Connecting { .. } | ConnState::Connected { .. }
@@ -70,7 +70,7 @@ impl ConnSubsystem {
                 state: self.conn.clone(),
             }];
         }
-        let addr = protocol.default_addr().to_string();
+        let addr = addr.to_string();
         self.conn = ConnState::Connecting {
             protocol,
             addr: addr.clone(),

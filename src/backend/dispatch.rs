@@ -2,6 +2,7 @@
 
 use crate::commands::Action;
 use crate::message::LogLevel;
+use crate::transport::Protocol;
 
 use super::Backend;
 use super::conn;
@@ -44,7 +45,13 @@ pub fn run_action(b: &mut Backend, action: Action) {
             b.llm.start_demo(s, chat);
         }
         Action::Connect(p) => {
-            let outs = b.tasks.active_mut().conn.connect(p);
+            let task = b.tasks.active();
+            let def = crate::backend::TaskDef::find(task.name.as_str());
+            let addr: &str = match p {
+                Protocol::Tcp => def.map_or("127.0.0.1:7878", |d| d.tcp_addr()),
+                Protocol::Zmq => def.map_or("tcp://127.0.0.1:5555", |d| d.zmq_sub_addr()),
+            };
+            let outs = b.tasks.active_mut().conn.connect(p, addr);
             emit_conn(&mut b.tasks.active_mut().chat, &outs);
         }
         Action::Disconnect => {

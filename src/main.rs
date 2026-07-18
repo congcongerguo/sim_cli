@@ -20,7 +20,7 @@ use crate::backend::{Command, ViewState};
 #[derive(Parser, Debug)]
 #[command(name = "sim_cli", about = "Claude Code 风格交互 CLI 演示")]
 struct Args {
-    #[arg(long, default_value = "mock-claude")]
+    #[arg(long, default_value = "claude")]
     model: String,
 }
 

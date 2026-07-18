@@ -29,15 +29,25 @@ fn main() -> Result<()> {
         } else {
             format!("&[{}]", cmds.join(", "))
         };
+        let addr = |v: &Option<String>| match v {
+            Some(s) => format!("Some(\"{s}\")"),
+            None => "None".to_string(),
+        };
         code.push_str(&format!(
             "    TaskDef {{\n\
              \x20       name: \"{}\",\n\
              \x20       hint: \"{}\",\n\
              \x20       commands: {cmds_str},\n\
              \x20       border_color: ({}, {}, {}),\n\
+             \x20       tcp_addr: {},\n\
+             \x20       zmq_sub_addr: {},\n\
+             \x20       zmq_pub_addr: {},\n\
              \x20   }},\n",
             task.name, task.hint,
             task.border_color[0], task.border_color[1], task.border_color[2],
+            addr(&task.tcp_addr),
+            addr(&task.zmq_sub_addr),
+            addr(&task.zmq_pub_addr),
         ));
     }
     code.push_str("];\n");
@@ -58,4 +68,7 @@ struct TaskDefToml {
     commands: Vec<String>,
     #[serde(default)]
     border_color: Vec<u8>,
+    tcp_addr: Option<String>,
+    zmq_sub_addr: Option<String>,
+    zmq_pub_addr: Option<String>,
 }

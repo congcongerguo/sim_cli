@@ -252,8 +252,8 @@ impl Frontend {
             }
             (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
                 let order = [ModelChoice::Claude, ModelChoice::Opus, ModelChoice::Haiku];
-                let cur = self.view.model.strip_prefix("mock-").unwrap_or(&self.view.model);
-                let i = order.iter().position(|m| m.slug() == cur).unwrap_or(0);
+                let cur = &self.view.model;
+                let i = order.iter().position(|m| m.slug() == cur.as_str()).unwrap_or(0);
                 let next = order[(i + 1) % order.len()];
                 self.run_hotkey(Action::Model(next));
                 return;
