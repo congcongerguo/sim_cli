@@ -50,9 +50,6 @@ pub fn run_action(b: &mut Backend, action: Action) {
                 b.tasks.active_mut().chat.push_system(conn::format(&o));
             }
         }
-        Action::TaskNew(_) | Action::TaskClose(_) | Action::TaskList => {
-            // Tasks are fixed; these actions are no-ops.
-        }
         Action::TaskSwitch(name) => {
             if name.trim().is_empty() {
                 return;
