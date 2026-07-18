@@ -36,9 +36,9 @@
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ScrollState {
-    /// 绝对行号（从第一条消息开始算）。
+    /// 绝对行号（从第一条消息开始算），u64 与 evicted_lines 同类型避免绕回。
     /// 在 conversation.rs 中通过 `offset - evicted_lines` 转为缓冲区内位置。
-    pub offset: u32,
+    pub offset: u64,
     /// true 时视图自动跟随缓冲区底部。
     pub follow_tail: bool,
 }
@@ -54,18 +54,18 @@ pub struct ScrollInput {
 }
 
 impl ScrollInput {
-    fn viewport_u32(&self) -> u32 { self.viewport.max(1) as u32 }
-    fn total_u32(&self) -> u32 { self.total_lines as u32 }
-    fn evicted_u32(&self) -> u32 { self.evicted_lines as u32 }
+    fn viewport_u64(&self) -> u64 { self.viewport.max(1) as u64 }
+    fn total_u64(&self) -> u64 { self.total_lines }
+    fn evicted_u64(&self) -> u64 { self.evicted_lines }
     /// 最大可滚动行数 = 总行数 - 可见行数。
-    fn max_scroll(&self) -> u32 {
-        self.total_u32().saturating_sub(self.viewport_u32())
+    fn max_scroll(&self) -> u64 {
+        self.total_u64().saturating_sub(self.viewport_u64())
     }
     /// 每次翻页的步长 = 一屏的行数。
-    fn step(&self) -> u32 { self.viewport_u32() }
+    fn step(&self) -> u64 { self.viewport_u64() }
     /// 底部绝对行号 = 已淘汰行数 + 最大滚动量。
-    fn bottom_abs(&self) -> u32 {
-        self.evicted_u32().saturating_add(self.max_scroll())
+    fn bottom_abs(&self) -> u64 {
+        self.evicted_u64().saturating_add(self.max_scroll())
     }
 }
 
@@ -97,7 +97,7 @@ pub fn page_down(state: &ScrollState, input: &ScrollInput) -> ScrollState {
 
 /// Home：跳到当前缓冲区的最顶部（已淘汰行的下一行）。
 pub fn home(input: &ScrollInput) -> ScrollState {
-    ScrollState { offset: input.evicted_u32(), follow_tail: false }
+    ScrollState { offset: input.evicted_u64(), follow_tail: false }
 }
 
 /// End：跳到底部并恢复跟尾模式。
@@ -117,18 +117,17 @@ mod tests {
         ScrollInput { viewport: 20, total_lines: 100, evicted_lines: 500 }
     }
     fn at_bottom() -> ScrollState { ScrollState { offset: 0, follow_tail: true } }
-    fn detached(o: u32) -> ScrollState { ScrollState { offset: o, follow_tail: false } }
+    fn detached(o: u64) -> ScrollState { ScrollState { offset: o, follow_tail: false } }
 
     #[test]
     fn page_up_from_bottom_detaches() {
         let r = page_up(&at_bottom(), &full_buf());
         assert!(!r.follow_tail);
-        assert_eq!(r.offset, 560); // bottom_abs=580, step=20 → 560
+        assert_eq!(r.offset, 560);
     }
     #[test]
     fn page_up_detached_goes_further() {
-        let r = page_up(&detached(560), &full_buf());
-        assert_eq!(r.offset, 540);
+        assert_eq!(page_up(&detached(560), &full_buf()).offset, 540);
     }
     #[test]
     fn page_up_saturates_at_zero() {
@@ -146,14 +145,11 @@ mod tests {
     }
     #[test]
     fn page_down_reaches_bottom() {
-        let r = page_down(&detached(560), &full_buf());
-        assert!(r.follow_tail);
+        assert!(page_down(&detached(560), &full_buf()).follow_tail);
     }
     #[test]
     fn home_jumps_to_top() {
-        let r = home(&full_buf());
-        assert_eq!(r.offset, 500); // evicted_lines
-        assert!(!r.follow_tail);
+        assert_eq!(home(&full_buf()).offset, 500);
     }
     #[test]
     fn end_jumps_to_bottom() {
@@ -161,19 +157,17 @@ mod tests {
     }
     #[test]
     fn small_buffer_no_scroll() {
-        let inp = ScrollInput { viewport: 20, total_lines: 5, evicted_lines: 0 };
-        assert_eq!(inp.max_scroll(), 0);
+        assert_eq!(ScrollInput { viewport: 20, total_lines: 5, evicted_lines: 0 }.max_scroll(), 0);
     }
     #[test]
     fn eviction_still_scrollable() {
         let inp = ScrollInput { viewport: 20, total_lines: 100, evicted_lines: 1000 };
-        let r = page_down(&home(&inp), &inp);
-        assert_eq!(r.offset, 1020);
+        assert_eq!(page_down(&home(&inp), &inp).offset, 1020);
     }
     #[test]
     fn viewport_zero_clamped() {
         let inp = ScrollInput { viewport: 0, total_lines: 100, evicted_lines: 0 };
-        assert_eq!(inp.viewport_u32(), 1);
+        assert_eq!(inp.viewport_u64(), 1);
         assert_eq!(inp.max_scroll(), 99);
     }
 }

@@ -29,7 +29,7 @@ pub struct RenderState {
     pub menu_items: Vec<(String, String)>,
     pub menu_idx: usize,
     pub menu_title: Option<String>,
-    pub scroll_offset: u32,
+    pub scroll_offset: u64,
     pub follow_tail: bool,
     #[allow(dead_code)]
     pub prev_total_lines: u32,
