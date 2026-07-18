@@ -15,7 +15,6 @@ pub use chat::Mode;
 pub use conn::ConnState;
 pub use modal::{ModalChoice, ModalRequest};
 pub use task::registry::{TaskDef, TaskInfo, TASK_DEFS};
-use task::TaskActor;
 
 #[derive(Debug)]
 pub enum Command {
@@ -61,10 +60,7 @@ impl ViewState {
     }
 }
 
-struct TaskRuntime {
-    handle: task::TaskHandle,
-    commands: Arc<Vec<task::CommandDef>>,
-}
+use task::TaskRuntime;
 
 pub struct Router {
     tasks: Vec<TaskRuntime>,
@@ -75,27 +71,10 @@ pub struct Router {
 
 impl Router {
     pub fn new(model: String) -> Self {
-        let mut tasks = Vec::new();
-        for def in TASK_DEFS {
-            let (handle, commands) = match def.name {
-                "conn" => {
-                    let actor = task::conn_actor::ConnTask::new(model.clone(), def);
-                    let cmds = Arc::new(actor.commands());
-                    (task::spawn_actor(actor), cmds)
-                }
-                "demo" => {
-                    let actor = task::demo_actor::DemoTask::new(model.clone(), def);
-                    let cmds = Arc::new(actor.commands());
-                    (task::spawn_actor(actor), cmds)
-                }
-                _ => {
-                    let actor = task::conn_actor::ConnTask::new(model.clone(), def);
-                    let cmds = Arc::new(actor.commands());
-                    (task::spawn_actor(actor), cmds)
-                }
-            };
-            tasks.push(TaskRuntime { handle, commands });
-        }
+        let tasks: Vec<TaskRuntime> = TASK_DEFS.iter().map(|def| {
+            task::create_actor(def.name, model.clone(), def)
+                .unwrap_or_else(|| panic!("unknown task type: {}", def.name))
+        }).collect();
         Self { tasks, active: 0, should_quit: false, modal: modal::ModalSubsystem::new() }
     }
 

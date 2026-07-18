@@ -8,11 +8,14 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, watch};
 
+use std::sync::Arc;
+
 use crate::message::{LogLevel, Message};
 use crate::transport::TransportEvent;
 
 use super::chat::ChatState;
 use super::conn::ConnState;
+use registry::TaskDef;
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -149,4 +152,24 @@ pub fn spawn_actor(actor: impl TaskActor) -> TaskHandle {
     });
 
     TaskHandle { cmd_tx, state_rx }
+}
+
+// ---------------------------------------------------------------------------
+// Actor factory dispatch — maps task name to create callback.
+// ---------------------------------------------------------------------------
+
+/// Handle returned when an actor is spawned.
+pub struct TaskRuntime {
+    pub handle: TaskHandle,
+    pub commands: Arc<Vec<CommandDef>>,
+}
+
+/// Look up the actor factory for `name` and call it.
+/// Add a new branch here when adding a new task type.
+pub fn create_actor(name: &str, model: String, def: &'static TaskDef) -> Option<TaskRuntime> {
+    match name {
+        "conn" => Some(conn_actor::create(model, def)),
+        "demo" => Some(demo_actor::create(model, def)),
+        _ => None,
+    }
 }

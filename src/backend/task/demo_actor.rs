@@ -78,3 +78,13 @@ impl TaskActor for DemoTask {
 fn msg(text: &str, level: LogLevel) -> Message {
     Message::System { text: text.into(), level }
 }
+
+use super::TaskRuntime;
+
+/// Callback: construct and spawn this actor.
+pub fn create(model: String, def: &'static TaskDef) -> TaskRuntime {
+    let actor = DemoTask::new(model, def);
+    let cmds = std::sync::Arc::new(actor.commands());
+    let handle = super::spawn_actor(actor);
+    TaskRuntime { handle, commands: cmds }
+}

@@ -108,3 +108,13 @@ fn fmt_outcome(o: &conn::ConnOutcome) -> Message {
     let (text, level) = conn::format(o);
     Message::System { text, level }
 }
+
+use super::TaskRuntime;
+
+/// Callback: construct and spawn this actor. Called by the registry dispatch.
+pub fn create(model: String, def: &'static TaskDef) -> TaskRuntime {
+    let actor = ConnTask::new(model, def);
+    let cmds = std::sync::Arc::new(actor.commands());
+    let handle = super::spawn_actor(actor);
+    TaskRuntime { handle, commands: cmds }
+}
