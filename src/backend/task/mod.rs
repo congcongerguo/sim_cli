@@ -56,15 +56,38 @@ pub const fn cmd(name: &'static str, desc: &'static str) -> CommandDef {
     CommandDef { name, desc, subs: &[] }
 }
 
+/// Point-in-time snapshot of a task actor's state, pushed to the UI every
+/// [`push_interval_ms`](TaskActor::push_interval_ms) via a `watch` channel.
+///
+/// Every field except [`Self::name`] comes from the task's own state — the
+/// framework just passes this struct through without interpretation.
 #[derive(Debug, Clone)]
 pub struct TaskSnapshot {
+    /// Tab label (from tasks.toml).
     pub name: String,
+
+    /// Current message log. Wrapped in `Arc` so the renderer can hold a
+    /// cheap reference without cloning the whole buffer every frame.
     pub messages: Arc<Vec<Message>>,
+
+    /// Cumulative render-line count of messages evicted from the ring buffer.
+    /// Used by the scroll system to keep the viewport stable across evictions.
     pub evicted_lines: u64,
+
+    /// Total render-line count of all messages currently in the buffer.
     pub buffer_total_lines: u64,
+
+    /// Active LLM model name (e.g. "claude", "opus", "haiku").
     pub model: String,
+
+    /// Task-defined state blob — drives the tab bar dot, status line badge,
+    /// and state panel key-value rows. The framework never inspects it.
     pub internal: TaskInternalState,
+
+    /// Most recent JSON value received from the transport, if any.
     pub latest_recv: Option<serde_json::Value>,
+
+    /// Wall-clock time of the most recent `latest_recv`.
     pub latest_recv_at: Option<chrono::DateTime<chrono::Local>>,
 }
 
