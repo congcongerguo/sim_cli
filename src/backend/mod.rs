@@ -26,7 +26,6 @@ pub enum Command {
 #[derive(Debug, Clone)]
 pub struct ViewState {
     pub messages: Arc<Vec<Message>>,
-    pub model: String,
     pub mode: Mode,
     pub streaming: bool,
     pub modal: Option<ModalRequest>,
@@ -42,7 +41,7 @@ pub struct ViewState {
 }
 
 impl ViewState {
-    pub fn initial(model: String) -> Self {
+    pub fn initial() -> Self {
         let (tasks, first_name) = if TASK_DEFS.is_empty() {
             (vec![], String::new())
         } else {
@@ -61,7 +60,6 @@ impl ViewState {
             messages: Arc::new(vec![
                 Message::System { text: msg, level: LogLevel::Notice },
             ]),
-            model,
             mode: Mode::Normal, streaming: false, modal: None, should_quit: false,
             internal: TaskInternalState::default(),
             latest_recv: None, latest_recv_at: None,
@@ -88,9 +86,9 @@ pub struct Router {
 }
 
 impl Router {
-    pub fn new(model: String) -> Self {
+    pub fn new() -> Self {
         let tasks: Vec<TaskRuntime> = TASK_DEFS.iter().filter_map(|def| {
-            task::create_actor(def.name, model.clone(), def).map(|rt| TaskRuntime {
+            task::create_actor(def.name, def).map(|rt| TaskRuntime {
                 name: def.name.to_string(),
                 handle: rt.handle,
                 commands: rt.commands,
@@ -114,7 +112,6 @@ impl Router {
 
         ViewState {
             messages: snap.messages.clone(),
-            model: snap.model,
             mode: Mode::Normal,
             streaming: false,
             modal: self.modal.request.clone(),
@@ -134,9 +131,8 @@ impl Router {
 pub async fn run(
     mut cmd_rx: mpsc::Receiver<Command>,
     view_tx: watch::Sender<ViewState>,
-    initial_model: String,
 ) {
-    let mut router = Router::new(initial_model);
+    let mut router = Router::new();
     let mut tick = tokio::time::interval(Duration::from_millis(100));
 
     loop {

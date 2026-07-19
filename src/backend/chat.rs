@@ -10,16 +10,14 @@ pub enum Mode {
 /// Per-task conversation log backed by a bounded ring buffer.
 pub struct ChatState {
     pub(crate) messages: LogBuffer,
-    pub(crate) model: String,
     #[allow(dead_code)]
     pub(crate) mode: Mode,
 }
 
 impl ChatState {
-    pub fn new(model: String) -> Self {
+    pub fn new() -> Self {
         Self {
             messages: LogBuffer::new(crate::log_buffer::DEFAULT_MAX),
-            model,
             mode: Mode::Normal,
         }
     }
@@ -44,7 +42,7 @@ mod tests {
 
     #[test]
     fn clear_leaves_only_cleared_notice() {
-        let mut c = ChatState::new("claude".into());
+        let mut c = ChatState::new();
         c.push_system("noise", LogLevel::Info);
         c.clear();
         assert_eq!(c.messages.len(), 1);

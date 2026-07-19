@@ -386,14 +386,6 @@ impl Frontend {
                 self.run_hotkey(&format!("plan {next}"));
                 return;
             }
-            (KeyCode::Char('o'), KeyModifiers::CONTROL) => {
-                let order = ["claude", "opus", "haiku"];
-                let cur = &self.view.model;
-                let i = order.iter().position(|m| m == &cur.as_str()).unwrap_or(0);
-                let next = order[(i + 1) % order.len()];
-                self.run_hotkey(&format!("model {next}"));
-                return;
-            }
             (KeyCode::Char('s'), KeyModifiers::CONTROL) => {
                 self.panel_visible = !self.panel_visible;
                 return;

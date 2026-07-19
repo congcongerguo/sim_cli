@@ -23,8 +23,8 @@ pub struct ConnTask {
 }
 
 impl ConnTask {
-    pub fn new(model: String, def: &'static TaskDef) -> Self {
-        Self { chat: ChatState::new(model), conn: ConnSubsystem::new(), def }
+    pub fn new(def: &'static TaskDef) -> Self {
+        Self { chat: ChatState::new(), conn: ConnSubsystem::new(), def }
     }
 
     fn do_connect(&mut self, sub: Option<&str>) -> Vec<Message> {
@@ -110,7 +110,6 @@ impl TaskActor for ConnTask {
             messages: self.chat.messages.to_arc(),
             evicted_lines: self.chat.messages.evicted_lines(),
             buffer_total_lines: self.chat.messages.total_lines(),
-            model: self.chat.model.clone(),
             internal: self.to_internal(),
             latest_recv: self.conn.latest_recv.clone(),
             latest_recv_at: self.conn.latest_recv_at,
@@ -137,8 +136,8 @@ fn fmt_outcome(o: &conn::ConnOutcome) -> Message {
 use super::TaskRuntime;
 
 /// Callback: construct and spawn this actor. Called by the registry dispatch.
-pub fn create(model: String, def: &'static TaskDef) -> TaskRuntime {
-    let actor = ConnTask::new(model, def);
+pub fn create(def: &'static TaskDef) -> TaskRuntime {
+    let actor = ConnTask::new(def);
     let cmds = std::sync::Arc::new(actor.commands());
     let handle = super::spawn_actor(actor);
     TaskRuntime { handle, commands: cmds }

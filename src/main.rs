@@ -27,15 +27,15 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let args = Args::parse();
+    let _args = Args::parse();
 
     let _guard = terminal::install()?;
     let mut term = terminal::new_terminal()?;
 
     let (cmd_tx, cmd_rx) = mpsc::channel::<Command>(64);
-    let (view_tx, view_rx) = watch::channel(ViewState::initial(args.model.clone()));
+    let (view_tx, view_rx) = watch::channel(ViewState::initial());
 
-    let backend_handle = tokio::spawn(backend::run(cmd_rx, view_tx, args.model));
+    let backend_handle = tokio::spawn(backend::run(cmd_rx, view_tx));
 
     let mut fe = frontend::Frontend::new(cmd_tx, view_rx);
     let res = fe.run(&mut term).await;

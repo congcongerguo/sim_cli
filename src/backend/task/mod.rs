@@ -74,9 +74,6 @@ pub struct TaskSnapshot {
     /// 当前 buffer 中所有消息的渲染总行数。
     pub buffer_total_lines: u64,
 
-    /// 当前使用的 LLM 模型名（例如 "claude"、"opus"、"haiku"）。
-    pub model: String,
-
     /// 由 task 自行定义的状态数据——驱动 tab 栏圆点、状态栏 badge
     /// 和 state panel 键值对。框架不做任何解读。
     pub internal: TaskInternalState,
@@ -223,10 +220,10 @@ pub struct TaskRuntime {
     pub commands: Arc<Vec<CommandDef>>,
 }
 
-pub fn create_actor(name: &str, model: String, def: &'static TaskDef) -> Option<TaskRuntime> {
+pub fn create_actor(name: &str, def: &'static TaskDef) -> Option<TaskRuntime> {
     #[cfg(feature = "conn-task")]
-    if name == "conn" { return Some(conn_actor::create(model, def)); }
+    if name == "conn" { return Some(conn_actor::create(def)); }
     #[cfg(feature = "demo-task")]
-    if name == "demo" { return Some(demo_actor::create(model, def)); }
+    if name == "demo" { return Some(demo_actor::create(def)); }
     None
 }

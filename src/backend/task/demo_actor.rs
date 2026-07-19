@@ -27,8 +27,8 @@ pub struct DemoTask {
 }
 
 impl DemoTask {
-    pub fn new(model: String, def: &'static TaskDef) -> Self {
-        Self { chat: ChatState::new(model), def, state: DemoState::Idle }
+    pub fn new(def: &'static TaskDef) -> Self {
+        Self { chat: ChatState::new(), def, state: DemoState::Idle }
     }
 
     /// Convert the private state machine into the framework's generic
@@ -95,7 +95,6 @@ impl TaskActor for DemoTask {
             messages: self.chat.messages.to_arc(),
             evicted_lines: self.chat.messages.evicted_lines(),
             buffer_total_lines: self.chat.messages.total_lines(),
-            model: self.chat.model.clone(),
             internal: self.to_internal(),
             latest_recv: None,
             latest_recv_at: None,
@@ -113,8 +112,8 @@ fn msg(text: &str, level: LogLevel) -> Message {
 use super::TaskRuntime;
 
 /// Callback: construct and spawn this actor.
-pub fn create(model: String, def: &'static TaskDef) -> TaskRuntime {
-    let actor = DemoTask::new(model, def);
+pub fn create(def: &'static TaskDef) -> TaskRuntime {
+    let actor = DemoTask::new(def);
     let cmds = std::sync::Arc::new(actor.commands());
     let handle = super::spawn_actor(actor);
     TaskRuntime { handle, commands: cmds }
