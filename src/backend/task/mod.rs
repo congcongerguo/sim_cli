@@ -117,11 +117,13 @@ pub trait TaskActor: Send + 'static {
     /// Snapshot push interval in milliseconds.
     fn push_interval_ms(&self) -> u64 { 100 }
 
-    /// If the actor has a transport, return its event receiver so the
-    /// harness can select on it directly (no polling delay).
-    /// Default: a dummy channel that never fires.
+    /// 如果 actor 有 transport，返回事件接收端，harness 会直接 select
+    /// 在上面（零轮询延迟）。
+    /// 默认：返回一个永不关闭的空 channel，select 分支永不触发。
     fn take_transport_rx(&mut self) -> mpsc::Receiver<TransportEvent> {
-        let (_tx, rx) = mpsc::channel(1);
+        let (tx, rx) = mpsc::channel(1);
+        // 泄漏 sender，保持 channel 打开，rx.recv() 永不返回
+        std::mem::forget(tx);
         rx
     }
 
@@ -182,14 +184,15 @@ pub fn spawn_actor(mut actor: impl TaskActor) -> TaskHandle {
                     }
                     None => break,
                 },
-                maybe_ev = transport_rx.recv() => match maybe_ev {
-                    Some(ev) => {
+                maybe_ev = transport_rx.recv() => {
+                    if let Some(ev) = maybe_ev {
                         for m in actor.on_transport(ev) {
                             actor.chat_mut().push_message(m);
                         }
                     }
-                    None => break,
-                },
+                    // 不 break：默认的 dummy channel 的 sender 已 drop，
+                    // rx 会立即返回 None，但这不代表 actor 应该退出。
+                }
                 _ = tick.tick() => {
                     for m in actor.tick() {
                         actor.chat_mut().push_message(m);
