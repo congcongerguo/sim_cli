@@ -15,8 +15,6 @@ pub struct RenderState {
     pub internal: TaskInternalState,
     pub tasks: Arc<Vec<TaskInfo>>,
     pub active_task_index: usize,
-    pub latest_recv: Option<serde_json::Value>,
-    pub latest_recv_at: Option<chrono::DateTime<chrono::Local>>,
 
     // ── Frontend interaction state ──
     pub input_text: String,

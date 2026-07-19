@@ -92,8 +92,6 @@ impl Frontend {
             internal: self.view.internal.clone(),
             tasks: self.view.tasks.clone(),
             active_task_index: self.view.active_task_index,
-            latest_recv: self.view.latest_recv.clone(),
-            latest_recv_at: self.view.latest_recv_at,
             input_text: self.current_text(),
             input_cursor: (0, 0),
             input_state: self.input_state(),

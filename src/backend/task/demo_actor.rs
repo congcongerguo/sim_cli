@@ -96,8 +96,6 @@ impl TaskActor for DemoTask {
             evicted_lines: self.chat.messages.evicted_lines(),
             buffer_total_lines: self.chat.messages.total_lines(),
             internal: self.to_internal(),
-            latest_recv: None,
-            latest_recv_at: None,
         }
     }
 

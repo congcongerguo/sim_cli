@@ -77,12 +77,6 @@ pub struct TaskSnapshot {
     /// 由 task 自行定义的状态数据——驱动 tab 栏圆点、状态栏 badge
     /// 和 state panel 键值对。框架不做任何解读。
     pub internal: TaskInternalState,
-
-    /// 从 transport 收到的最新 JSON 值（如有）。
-    pub latest_recv: Option<serde_json::Value>,
-
-    /// 最近一次 `latest_recv` 的本地时间。
-    pub latest_recv_at: Option<chrono::DateTime<chrono::Local>>,
 }
 
 /// Shared commands every task provides — use `base_commands()` in `commands()`.

@@ -65,7 +65,7 @@ impl RatatuiRenderer {
             let tl = conversation::render_ratatui(
                 f, top[0], state, vh,
             );
-            state_panel::render(f, top[1], &state.internal, &state.latest_recv, &state.latest_recv_at);
+            state_panel::render(f, top[1], &state.internal);
             (vh, tl)
         } else {
             let vh = conv_area.height;

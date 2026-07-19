@@ -3,18 +3,11 @@ use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
-use chrono::{DateTime, Local};
 use serde_json::Value;
 
 use crate::backend::TaskInternalState;
 
-pub fn render(
-    f: &mut Frame,
-    area: Rect,
-    internal: &TaskInternalState,
-    latest_recv: &Option<Value>,
-    latest_recv_at: &Option<DateTime<Local>>,
-) {
+pub fn render(f: &mut Frame, area: Rect, internal: &TaskInternalState) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray))
@@ -34,8 +27,12 @@ pub fn render(
 
     let mut lines: Vec<Line<'static>> = Vec::new();
 
-    // ── Task-internal state fields ──
-    if !internal.fields.is_empty() {
+    if internal.fields.is_empty() {
+        lines.push(Line::from(Span::styled(
+            "(no data yet)",
+            Style::default().fg(Color::DarkGray),
+        )));
+    } else {
         let key_w = internal.fields.iter()
             .map(|(k, _)| k.chars().count())
             .max()
@@ -52,67 +49,8 @@ pub fn render(
                     Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
                 ),
                 Span::raw(" "),
-                Span::styled(value, Style::default().fg(Color::Green)),
+                Span::styled(value, Style::default().fg(Color::White)),
             ]));
-        }
-        lines.push(Line::from(""));
-    }
-
-    match latest_recv {
-        None => {
-            if lines.is_empty() {
-                lines.push(Line::from(Span::styled(
-                    "(no data yet)",
-                    Style::default().fg(Color::DarkGray),
-                )));
-            }
-        }
-        Some(v) => {
-            let mut pairs: Vec<(String, String)> = Vec::new();
-            flatten("", v, &mut pairs);
-            if pairs.is_empty() {
-                lines.push(Line::from(Span::styled(
-                    "(empty)",
-                    Style::default().fg(Color::DarkGray),
-                )));
-            } else {
-                let key_w = pairs
-                    .iter()
-                    .map(|(k, _)| k.chars().count())
-                    .max()
-                    .unwrap_or(0)
-                    .min(((inner.width as usize) / 2).max(1))
-                    .min(20);
-                let value_w = (inner.width as usize).saturating_sub(key_w + 1);
-                for (k, val) in pairs {
-                    let key = truncate(&k, key_w);
-                    let value = truncate(&val, value_w);
-                    lines.push(Line::from(vec![
-                        Span::styled(
-                            format!("{:<width$}", key, width = key_w),
-                            Style::default()
-                                .fg(Color::Cyan)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw(" "),
-                        Span::styled(value, Style::default().fg(Color::White)),
-                    ]));
-                }
-            }
-        }
-    }
-
-    if let Some(ts) = latest_recv_at {
-        let avail = inner.height as usize;
-        if avail > 0 && lines.len() + 2 <= avail {
-            while lines.len() + 2 < avail {
-                lines.push(Line::from(""));
-            }
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                format!("updated {}", ts.format("%H:%M:%S")),
-                Style::default().fg(Color::DarkGray),
-            )));
         }
     }
 
@@ -120,7 +58,9 @@ pub fn render(
     f.render_widget(para, inner);
 }
 
-fn flatten(prefix: &str, v: &Value, out: &mut Vec<(String, String)>) {
+/// Recursively flatten a JSON value into dot-separated key-value pairs.
+/// Public so task actors can convert received JSON into [`TaskInternalState::fields`].
+pub fn flatten_json(prefix: &str, v: &Value, out: &mut Vec<(String, String)>) {
     match v {
         Value::Object(map) => {
             if map.is_empty() && !prefix.is_empty() {
@@ -133,7 +73,7 @@ fn flatten(prefix: &str, v: &Value, out: &mut Vec<(String, String)>) {
                 } else {
                     format!("{prefix}.{k}")
                 };
-                flatten(&next, child, out);
+                flatten_json(&next, child, out);
             }
         }
         Value::Array(_) => {
@@ -190,7 +130,7 @@ mod tests {
             "pos": {"x": 100, "y": 200, "c": 50},
         });
         let mut out = Vec::new();
-        flatten("", &v, &mut out);
+        flatten_json("", &v, &mut out);
         let map: std::collections::HashMap<_, _> = out.into_iter().collect();
         assert_eq!(map.get("id").map(String::as_str), Some("1"));
         assert_eq!(map.get("msg").map(String::as_str), Some("ping 1"));
@@ -203,7 +143,7 @@ mod tests {
     fn flatten_array_compact() {
         let v = json!({"ma": [1, 2, 3]});
         let mut out = Vec::new();
-        flatten("", &v, &mut out);
+        flatten_json("", &v, &mut out);
         assert_eq!(out, vec![("ma".into(), "[1,2,3]".into())]);
     }
 
@@ -211,7 +151,7 @@ mod tests {
     fn flatten_scalars() {
         let v = json!({"b": true, "n": null, "s": "hi"});
         let mut out = Vec::new();
-        flatten("", &v, &mut out);
+        flatten_json("", &v, &mut out);
         let map: std::collections::HashMap<_, _> = out.into_iter().collect();
         assert_eq!(map.get("b").map(String::as_str), Some("true"));
         assert_eq!(map.get("n").map(String::as_str), Some("null"));

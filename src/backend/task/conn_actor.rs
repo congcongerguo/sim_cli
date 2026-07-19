@@ -68,10 +68,14 @@ impl ConnTask {
                 (e.chars().take(40).collect(), false)
             }
         };
+        let mut fields: Vec<(String, String)> = Vec::new();
+        if let Some(ref v) = self.conn.latest_recv {
+            crate::ui::state_panel::flatten_json("", v, &mut fields);
+        }
         TaskInternalState {
             active,
             badge: Some(format!("net: {label}")),
-            ..Default::default()
+            fields,
         }
     }
 }
@@ -111,8 +115,6 @@ impl TaskActor for ConnTask {
             evicted_lines: self.chat.messages.evicted_lines(),
             buffer_total_lines: self.chat.messages.total_lines(),
             internal: self.to_internal(),
-            latest_recv: self.conn.latest_recv.clone(),
-            latest_recv_at: self.conn.latest_recv_at,
         }
     }
 
