@@ -24,18 +24,17 @@ use registry::TaskDef;
 // Shared types
 // ---------------------------------------------------------------------------
 
-/// Task-agnostic internal state exposed to the UI.
+/// task 无关的通用内部状态，暴露给 UI 层。
 ///
-/// Each actor converts its own private state machine into this struct in
-/// [`TaskActor::snapshot`]. Adding a new task type never requires changes
-/// to this struct or any downstream framework types.
+/// 每个 actor 在 [`TaskActor::snapshot`] 中把自己的私有状态机转换为此结构体。
+/// 新增 task 类型无需改动本结构体或任何下游框架类型。
 #[derive(Debug, Clone, Default)]
 pub struct TaskInternalState {
-    /// Key-value rows shown in the state panel.
+    /// 显示在 state panel 中的键值对。
     pub fields: Vec<(String, String)>,
-    /// Green dot in the tab bar when `true`.
+    /// 为 `true` 时 tab 栏显示绿色圆点。
     pub active: bool,
-    /// Status line middle badge. When `Some`, replaces the "idle" label.
+    /// 状态栏中间的 badge。为 `Some` 时替换默认的 "idle" 文字。
     pub badge: Option<String>,
 }
 
@@ -56,38 +55,36 @@ pub const fn cmd(name: &'static str, desc: &'static str) -> CommandDef {
     CommandDef { name, desc, subs: &[] }
 }
 
-/// Point-in-time snapshot of a task actor's state, pushed to the UI every
-/// [`push_interval_ms`](TaskActor::push_interval_ms) via a `watch` channel.
+/// 某个时间点上的 task actor 状态快照。每 [`push_interval_ms`] ms 通过
+/// `watch` channel 推送给 UI。
 ///
-/// Every field except [`Self::name`] comes from the task's own state — the
-/// framework just passes this struct through without interpretation.
+/// 除 [`Self::name`] 外，所有字段都来自 task 自身的状态——框架只负责透传，不做解读。
 #[derive(Debug, Clone)]
 pub struct TaskSnapshot {
-    /// Tab label (from tasks.toml).
+    /// tab 标签名（来自 tasks.toml）。
     pub name: String,
 
-    /// Current message log. Wrapped in `Arc` so the renderer can hold a
-    /// cheap reference without cloning the whole buffer every frame.
+    /// 当前消息日志。用 `Arc` 包裹，渲染器可以持有廉价引用，避免每帧克隆整个 buffer。
     pub messages: Arc<Vec<Message>>,
 
-    /// Cumulative render-line count of messages evicted from the ring buffer.
-    /// Used by the scroll system to keep the viewport stable across evictions.
+    /// 已从环形 buffer 中淘汰的消息的累计渲染行数。
+    /// 滚动系统用这个值保持视口在淘汰前后不跳动。
     pub evicted_lines: u64,
 
-    /// Total render-line count of all messages currently in the buffer.
+    /// 当前 buffer 中所有消息的渲染总行数。
     pub buffer_total_lines: u64,
 
-    /// Active LLM model name (e.g. "claude", "opus", "haiku").
+    /// 当前使用的 LLM 模型名（例如 "claude"、"opus"、"haiku"）。
     pub model: String,
 
-    /// Task-defined state blob — drives the tab bar dot, status line badge,
-    /// and state panel key-value rows. The framework never inspects it.
+    /// 由 task 自行定义的状态数据——驱动 tab 栏圆点、状态栏 badge
+    /// 和 state panel 键值对。框架不做任何解读。
     pub internal: TaskInternalState,
 
-    /// Most recent JSON value received from the transport, if any.
+    /// 从 transport 收到的最新 JSON 值（如有）。
     pub latest_recv: Option<serde_json::Value>,
 
-    /// Wall-clock time of the most recent `latest_recv`.
+    /// 最近一次 `latest_recv` 的本地时间。
     pub latest_recv_at: Option<chrono::DateTime<chrono::Local>>,
 }
 
