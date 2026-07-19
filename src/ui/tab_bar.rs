@@ -4,53 +4,46 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 
-use crate::backend::{ConnState, TaskInfo};
+use crate::backend::TaskInfo;
 
-/// Render a 1-line tab bar. Active tab is highlighted; other tabs are dimmed.
-/// Connection status is shown as a coloured dot prefix.
+/// Windows-style tab bar (2 rows high).
+/// Row 0: tab labels with coloured backgrounds.
+/// Row 1: separator line matching the active tab colour.
 pub fn render(f: &mut Frame, area: Rect, tasks: &[TaskInfo], active: usize) {
+    // ── Row 0: tab labels ──
+    let tab_row = Rect { height: 1, ..area };
     let mut spans: Vec<Span> = Vec::new();
 
     for (i, t) in tasks.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::raw(" "));
-        }
-
-        let (base_fg, base_bg, bold) = if i == active {
-            (Color::Black, Color::Cyan, true)
+        let (fg, bg) = if i == active {
+            (Color::White, Color::Blue)
         } else {
-            (Color::Gray, Color::DarkGray, false)
+            (Color::Gray, Color::DarkGray)
         };
 
-        let dot = conn_dot(&t.conn);
-        let demo_icon = if t.demo_running { " ⏳" } else { "" };
-        let label = format!("{dot} {}{demo_icon} ", t.name);
-
-        let mut style = Style::default().fg(base_fg).bg(base_bg);
-        if bold {
-            style = style.add_modifier(Modifier::BOLD);
-        }
-
-        spans.push(Span::styled(label, style));
+        let (dot, dot_color) = if t.active {
+            ("●", Color::Green)
+        } else {
+            ("·", Color::DarkGray)
+        };
+        spans.push(Span::styled(
+            format!(" {dot} "),
+            Style::default().fg(dot_color).bg(bg),
+        ));
+        spans.push(Span::styled(
+            format!(" {} ", t.name),
+            Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
+        ));
     }
 
-    // Fill remaining space with the active tab's background colour.
-    let fill = Span::styled(
-        " ".repeat(area.width as usize),
-        Style::default().bg(Color::Cyan),
+    spans.push(Span::raw(" ".repeat(area.width as usize)));
+    f.render_widget(Paragraph::new(Line::from(spans)), tab_row);
+
+    // ── Row 1: separator ──
+    let sep_row = Rect { y: area.y + 1, height: 1, ..area };
+    let sep = Span::styled(
+        "─".repeat(area.width as usize),
+        Style::default().fg(Color::DarkGray),
     );
-    spans.push(fill);
-
-    let line = Line::from(spans);
-    let p = Paragraph::new(line);
-    f.render_widget(p, area);
-}
-
-fn conn_dot(state: &ConnState) -> &'static str {
-    match state {
-        ConnState::Connected { .. } => "●",
-        ConnState::Connecting { .. } => "○",
-        ConnState::Error(_) => "✕",
-        ConnState::Disconnected => "·",
-    }
+    f.render_widget(Paragraph::new(Line::from(sep)), sep_row);
 }

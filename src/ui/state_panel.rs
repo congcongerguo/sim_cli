@@ -6,9 +6,12 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use chrono::{DateTime, Local};
 use serde_json::Value;
 
+use crate::backend::TaskInternalState;
+
 pub fn render(
     f: &mut Frame,
     area: Rect,
+    internal: &TaskInternalState,
     latest_recv: &Option<Value>,
     latest_recv_at: &Option<DateTime<Local>>,
 ) {
@@ -31,12 +34,38 @@ pub fn render(
 
     let mut lines: Vec<Line<'static>> = Vec::new();
 
+    // ── Task-internal state fields ──
+    if !internal.fields.is_empty() {
+        let key_w = internal.fields.iter()
+            .map(|(k, _)| k.chars().count())
+            .max()
+            .unwrap_or(0)
+            .min(((inner.width as usize) / 2).max(1))
+            .min(20);
+        let value_w = (inner.width as usize).saturating_sub(key_w + 1);
+        for (k, val) in &internal.fields {
+            let key = truncate(k, key_w);
+            let value = truncate(val, value_w);
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("{:<width$}", key, width = key_w),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+                Span::styled(value, Style::default().fg(Color::Green)),
+            ]));
+        }
+        lines.push(Line::from(""));
+    }
+
     match latest_recv {
         None => {
-            lines.push(Line::from(Span::styled(
-                "(no data yet)",
-                Style::default().fg(Color::DarkGray),
-            )));
+            if lines.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    "(no data yet)",
+                    Style::default().fg(Color::DarkGray),
+                )));
+            }
         }
         Some(v) => {
             let mut pairs: Vec<(String, String)> = Vec::new();

@@ -4,7 +4,7 @@ use crate::transport::{Protocol, TransportEvent};
 use super::super::chat::ChatState;
 use super::super::conn::{self, ConnSubsystem};
 use super::registry::TaskDef;
-use super::{base_commands, cmd, CommandDef, SubDef, TaskActor, TaskSnapshot};
+use super::{base_commands, cmd, CommandDef, SubDef, TaskActor, TaskInternalState, TaskSnapshot};
 
 #[cfg(feature = "zmq")]
 const CON_SUBS: &[SubDef] = &[
@@ -49,6 +49,31 @@ impl ConnTask {
     fn do_send(&mut self) -> Vec<Message> {
         self.conn.send_ping().into_iter().map(|o| fmt_outcome(&o)).collect()
     }
+
+    /// Convert [`ConnState`] into the framework's generic [`TaskInternalState`].
+    fn to_internal(&self) -> TaskInternalState {
+        let (label, active) = match &self.conn.conn {
+            crate::backend::conn::ConnState::Disconnected => ("off".to_string(), false),
+            crate::backend::conn::ConnState::Connecting { protocol, .. } => {
+                return TaskInternalState {
+                    active: true,
+                    badge: Some(format!("{}: ⌛", protocol.as_str())),
+                    ..Default::default()
+                };
+            }
+            crate::backend::conn::ConnState::Connected { addr, .. } => {
+                (addr.clone(), true)
+            }
+            crate::backend::conn::ConnState::Error(e) => {
+                (e.chars().take(40).collect(), false)
+            }
+        };
+        TaskInternalState {
+            active,
+            badge: Some(format!("net: {label}")),
+            ..Default::default()
+        }
+    }
 }
 
 impl TaskActor for ConnTask {
@@ -69,12 +94,14 @@ impl TaskActor for ConnTask {
         }
     }
 
+    fn take_transport_rx(&mut self) -> tokio::sync::mpsc::Receiver<crate::transport::TransportEvent> {
+        self.conn.take_rx()
+    }
+
     fn tick(&mut self) -> Vec<Message> {
-        let mut msgs = vec![];
-        while let Ok(ev) = self.conn.ev_rx.try_recv() {
-            msgs.extend(self.conn.handle_event(ev).into_iter().map(|o| fmt_outcome(&o)));
-        }
-        msgs
+        // Transport events now arrive via on_transport → select branch,
+        // so tick() only handles non-I/O periodic work. Currently none.
+        vec![]
     }
 
     fn snapshot(&self) -> TaskSnapshot {
@@ -84,8 +111,7 @@ impl TaskActor for ConnTask {
             evicted_lines: self.chat.messages.evicted_lines(),
             buffer_total_lines: self.chat.messages.total_lines(),
             model: self.chat.model.clone(),
-            conn: self.conn.conn.clone(),
-            demo_running: false,
+            internal: self.to_internal(),
             latest_recv: self.conn.latest_recv.clone(),
             latest_recv_at: self.conn.latest_recv_at,
         }

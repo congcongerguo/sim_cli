@@ -29,24 +29,15 @@ fn main() -> Result<()> {
             Some(s) => format!("Some(\"{s}\")"),
             None => "None".to_string(),
         };
-        let bc = &task.border_color;
-        if bc.len() < 3 {
-            panic!(
-                "tasks.toml: task '{}' border_color needs 3 RGB values, got {:?}",
-                task.name, bc
-            );
-        }
         code.push_str(&format!(
             "    TaskDef {{\n\
              \x20       name: \"{}\",\n\
              \x20       hint: \"{}\",\n\
-             \x20       border_color: ({}, {}, {}),\n\
              \x20       tcp_addr: {},\n\
              \x20       zmq_sub_addr: {},\n\
              \x20       zmq_pub_addr: {},\n\
              \x20   }},\n",
             task.name, task.hint,
-            bc[0], bc[1], bc[2],
             addr(&task.tcp_addr),
             addr(&task.zmq_sub_addr),
             addr(&task.zmq_pub_addr),
@@ -69,8 +60,6 @@ struct TaskDefToml {
     #[serde(default)]
     #[allow(dead_code)]
     commands: Vec<String>,
-    #[serde(default)]
-    border_color: Vec<u8>,
     tcp_addr: Option<String>,
     zmq_sub_addr: Option<String>,
     zmq_pub_addr: Option<String>,

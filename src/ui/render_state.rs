@@ -3,7 +3,7 @@
 
 use std::sync::Arc;
 
-use crate::backend::{ConnState, ModalRequest, Mode, TaskInfo};
+use crate::backend::{ModalRequest, TaskInfo, TaskInternalState};
 use crate::frontend::InputState;
 use crate::message::Message;
 
@@ -11,13 +11,10 @@ use crate::message::Message;
 pub struct RenderState {
     // ── From ViewState ──
     pub messages: Arc<Vec<Message>>,
-    pub model: String,
-    pub mode: Mode,
     pub streaming: bool,
-    pub conn: ConnState,
+    pub internal: TaskInternalState,
     pub tasks: Arc<Vec<TaskInfo>>,
     pub active_task_index: usize,
-    pub active_task: String,
     pub latest_recv: Option<serde_json::Value>,
     pub latest_recv_at: Option<chrono::DateTime<chrono::Local>>,
 

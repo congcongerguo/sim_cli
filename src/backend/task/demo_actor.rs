@@ -2,22 +2,53 @@ use crate::message::{LogLevel, Message};
 
 use super::super::chat::ChatState;
 use super::registry::TaskDef;
-use super::{base_commands, cmd, CommandDef, TaskActor, TaskSnapshot};
+use super::{base_commands, cmd, CommandDef, TaskActor, TaskInternalState, TaskSnapshot};
+
+// ── Private state machine (not visible to the framework) ──────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DemoState {
+    Idle,
+    Running { counter: u64 },
+}
+
+impl DemoState {
+    fn is_running(&self) -> bool {
+        matches!(self, DemoState::Running { .. })
+    }
+}
+
+// ── Actor ─────────────────────────────────────────────────────────────
 
 pub struct DemoTask {
     chat: ChatState,
     def: &'static TaskDef,
-    running: bool,
-    counter: u64,
+    state: DemoState,
 }
 
 impl DemoTask {
     pub fn new(model: String, def: &'static TaskDef) -> Self {
-        Self { chat: ChatState::new(model), def, running: false, counter: 0 }
+        Self { chat: ChatState::new(model), def, state: DemoState::Idle }
+    }
+
+    /// Convert the private state machine into the framework's generic
+    /// [`TaskInternalState`] so the UI can render it without knowing about
+    /// [`DemoState`].
+    fn to_internal(&self) -> TaskInternalState {
+        match &self.state {
+            DemoState::Idle => TaskInternalState::default(),
+            DemoState::Running { counter } => TaskInternalState {
+                active: true,
+                badge: Some(format!("demo: ● #{counter}")),
+                fields: vec![("status".into(), format!("running (#{counter})"))],
+            },
+        }
     }
 }
 
 impl TaskActor for DemoTask {
+    fn tick_interval_ms(&self) -> u64 { 1000 }
+
     fn commands(&self) -> Vec<CommandDef> {
         let mut v = base_commands();
         v.push(cmd("start", "begin periodic logging"));
@@ -28,18 +59,18 @@ impl TaskActor for DemoTask {
     fn handle_own(&mut self, cmd: &str, _sub: Option<&str>, _args: &[&str]) -> Vec<Message> {
         match cmd {
             "start" => {
-                if self.running {
+                if self.state.is_running() {
                     vec![msg("already running", LogLevel::Warn)]
                 } else {
-                    self.running = true;
+                    self.state = DemoState::Running { counter: 0 };
                     vec![msg("demo started — logging every 1s", LogLevel::Notice)]
                 }
             }
             "stop" => {
-                if !self.running {
+                if !self.state.is_running() {
                     vec![msg("not running", LogLevel::Warn)]
                 } else {
-                    self.running = false;
+                    self.state = DemoState::Idle;
                     vec![msg("demo stopped", LogLevel::Notice)]
                 }
             }
@@ -48,12 +79,13 @@ impl TaskActor for DemoTask {
     }
 
     fn tick(&mut self) -> Vec<Message> {
-        if self.running {
-            let n = self.counter;
-            self.counter += 1;
-            vec![Message::System { text: format!("{n}"), level: LogLevel::Debug }]
-        } else {
-            vec![]
+        match &mut self.state {
+            DemoState::Running { counter } => {
+                let n = *counter;
+                *counter += 1;
+                vec![Message::System { text: format!("{n}"), level: LogLevel::Debug }]
+            }
+            DemoState::Idle => vec![],
         }
     }
 
@@ -64,8 +96,7 @@ impl TaskActor for DemoTask {
             evicted_lines: self.chat.messages.evicted_lines(),
             buffer_total_lines: self.chat.messages.total_lines(),
             model: self.chat.model.clone(),
-            conn: crate::backend::ConnState::Disconnected,
-            demo_running: self.running,
+            internal: self.to_internal(),
             latest_recv: None,
             latest_recv_at: None,
         }

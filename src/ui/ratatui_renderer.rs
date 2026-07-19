@@ -37,7 +37,7 @@ impl RatatuiRenderer {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1),
+                Constraint::Length(2),
                 Constraint::Min(3),
                 Constraint::Length(input_height),
                 Constraint::Length(1),
@@ -61,14 +61,14 @@ impl RatatuiRenderer {
                     Constraint::Length(STATE_PANEL_WIDTH),
                 ])
                 .split(conv_area);
-            let vh = top[0].height.saturating_sub(2);
+            let vh = top[0].height;
             let tl = conversation::render_ratatui(
                 f, top[0], state, vh,
             );
-            state_panel::render(f, top[1], &state.latest_recv, &state.latest_recv_at);
+            state_panel::render(f, top[1], &state.internal, &state.latest_recv, &state.latest_recv_at);
             (vh, tl)
         } else {
-            let vh = conv_area.height.saturating_sub(2);
+            let vh = conv_area.height;
             let tl = conversation::render_ratatui(
                 f, conv_area, state, vh,
             );

@@ -61,6 +61,20 @@ impl ConnSubsystem {
         }
     }
 
+    /// Take the transport event receiver for external select loops.
+    /// Replaces it with a dummy channel so subsequent `tick()` polling
+    /// is harmless (but unnecessary — prefer letting the harness select).
+    pub fn take_rx(&mut self) -> mpsc::Receiver<TransportEvent> {
+        let (_, dummy) = mpsc::channel(1);
+        std::mem::replace(&mut self.ev_rx, dummy)
+    }
+
+    /// Return a clone of the sender for spawning new transport tasks.
+    #[allow(dead_code)]
+    pub fn sender(&self) -> mpsc::Sender<TransportEvent> {
+        self.ev_tx.clone()
+    }
+
     pub fn connect(&mut self, protocol: Protocol, addr: &str) -> Vec<ConnOutcome> {
         if matches!(
             self.conn,

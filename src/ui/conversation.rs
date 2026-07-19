@@ -2,9 +2,8 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::widgets::{Block, Paragraph, Wrap};
 
-use crate::backend::Mode;
 use crate::message::{LogLevel, Message};
 use crate::ui::render_state::RenderState;
 use crate::ui::tool_card::tool_card_lines;
@@ -51,17 +50,7 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState, visible: u
 
     // total_lines 来自 LogBuffer 增量维护（O(1)），不是 all.len()
     let total_lines = state.buffer_total_lines as u16;
-    let mode_label = match state.mode {
-        Mode::Normal => "normal",
-        Mode::Plan => "plan",
-    };
-
-    let border_color = task_border_color(&state.active_task);
-    let title = format!(" {} · {} · {} ", state.active_task, state.model, mode_label);
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(border_color))
-        .title(Span::styled(title, Style::default().fg(border_color).add_modifier(Modifier::BOLD)));
+    let block = Block::default();
 
     // 绝对行号 → 缓冲区内相对位置
     //   offset  = 绝对行号（从第一条消息算起）
@@ -104,10 +93,4 @@ fn log_level_color(level: LogLevel) -> Color {
         LogLevel::Info => Color::White,
         LogLevel::Debug => Color::DarkGray,
     }
-}
-
-fn task_border_color(task_name: &str) -> Color {
-    crate::backend::TaskDef::find(task_name)
-        .map(|d| Color::Rgb(d.border_color.0, d.border_color.1, d.border_color.2))
-        .unwrap_or(Color::DarkGray)
 }

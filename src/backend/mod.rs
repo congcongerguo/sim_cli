@@ -12,9 +12,9 @@ use tokio::sync::{mpsc, watch};
 use crate::message::{LogLevel, Message};
 
 pub use chat::Mode;
-pub use conn::ConnState;
 pub use modal::{ModalChoice, ModalRequest};
-pub use task::registry::{TaskDef, TaskInfo, TASK_DEFS};
+pub use task::TaskInternalState;
+pub use task::registry::{TaskInfo, TASK_DEFS};
 
 #[derive(Debug)]
 pub enum Command {
@@ -31,11 +31,10 @@ pub struct ViewState {
     pub streaming: bool,
     pub modal: Option<ModalRequest>,
     pub should_quit: bool,
-    pub conn: ConnState,
+    pub internal: TaskInternalState,
     pub latest_recv: Option<serde_json::Value>,
     pub latest_recv_at: Option<chrono::DateTime<chrono::Local>>,
     pub tasks: Arc<Vec<TaskInfo>>,
-    pub active_task: String,
     pub active_task_index: usize,
     pub active_commands: Arc<Vec<task::CommandDef>>,
     pub evicted_lines: u64,
@@ -49,7 +48,7 @@ impl ViewState {
         } else {
             let d = &TASK_DEFS[0];
             let tasks: Vec<TaskInfo> = TASK_DEFS.iter()
-                .map(|d| TaskInfo { name: d.name.into(), demo_running: false, conn: ConnState::Disconnected })
+                .map(|d| TaskInfo { name: d.name.into(), active: false })
                 .collect();
             (tasks, d.name.to_string())
         };
@@ -64,9 +63,10 @@ impl ViewState {
             ]),
             model,
             mode: Mode::Normal, streaming: false, modal: None, should_quit: false,
-            conn: ConnState::Disconnected, latest_recv: None, latest_recv_at: None,
+            internal: TaskInternalState::default(),
+            latest_recv: None, latest_recv_at: None,
             tasks: Arc::new(tasks),
-            active_task: first_name, active_task_index: 0,
+            active_task_index: 0,
             active_commands: Arc::new(vec![]),
             evicted_lines: 0,
             buffer_total_lines: 0,
@@ -100,16 +100,12 @@ impl Router {
         Self { tasks, active: 0, should_quit: false, modal: modal::ModalSubsystem::new() }
     }
 
-    /// Build ViewState from live actor snapshots — reads every actor's
-    /// state_rx so the tab bar shows real connection status and demo_running.
     fn build_view(&self) -> ViewState {
-        // Collect live TaskInfo from all actors (not from TASK_DEFS).
         let task_infos: Vec<TaskInfo> = self.tasks.iter().map(|rt| {
             let snap = rt.handle.state_rx.borrow();
             TaskInfo {
                 name: snap.name.clone(),
-                demo_running: snap.demo_running,
-                conn: snap.conn.clone(),
+                active: snap.internal.active,
             }
         }).collect();
 
@@ -123,11 +119,10 @@ impl Router {
             streaming: false,
             modal: self.modal.request.clone(),
             should_quit: self.should_quit,
-            conn: snap.conn,
+            internal: snap.internal,
             latest_recv: snap.latest_recv,
             latest_recv_at: snap.latest_recv_at,
             tasks: Arc::new(task_infos),
-            active_task: snap.name.clone(),
             active_task_index: self.active,
             active_commands: active_rt.commands.clone(),
             evicted_lines: snap.evicted_lines,
@@ -155,16 +150,11 @@ pub async fn run(
                     }
                 }
                 Some(Command::TagSwitch(name)) => {
-                    // Search self.tasks (runtime array, not TASK_DEFS) so
-                    // feature-filtered tasks are excluded from the index.
                     if let Some(pos) = router.tasks.iter().position(|rt| rt.name == name) {
                         router.active = pos;
                     }
                 }
-                Some(Command::Permission(_choice)) => {
-                    // Permission modal handling requires mock-llm wiring.
-                    // Currently a no-op; the feature-gated code path is unused.
-                }
+                Some(Command::Permission(_choice)) => {}
                 None => break,
             },
             _ = tick.tick() => {}

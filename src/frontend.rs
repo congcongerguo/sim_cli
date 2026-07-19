@@ -88,13 +88,10 @@ impl Frontend {
         let menu = self.menu_items();
         RenderState {
             messages: self.view.messages.clone(),
-            model: self.view.model.clone(),
-            mode: self.view.mode,
             streaming: self.view.streaming,
-            conn: self.view.conn.clone(),
+            internal: self.view.internal.clone(),
             tasks: self.view.tasks.clone(),
             active_task_index: self.view.active_task_index,
-            active_task: self.view.active_task.clone(),
             latest_recv: self.view.latest_recv.clone(),
             latest_recv_at: self.view.latest_recv_at,
             input_text: self.current_text(),

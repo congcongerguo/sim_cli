@@ -18,12 +18,26 @@ use crate::message::{LogLevel, Message};
 use crate::transport::TransportEvent;
 
 use super::chat::ChatState;
-use super::conn::ConnState;
 use registry::TaskDef;
 
 // ---------------------------------------------------------------------------
 // Shared types
 // ---------------------------------------------------------------------------
+
+/// Task-agnostic internal state exposed to the UI.
+///
+/// Each actor converts its own private state machine into this struct in
+/// [`TaskActor::snapshot`]. Adding a new task type never requires changes
+/// to this struct or any downstream framework types.
+#[derive(Debug, Clone, Default)]
+pub struct TaskInternalState {
+    /// Key-value rows shown in the state panel.
+    pub fields: Vec<(String, String)>,
+    /// Green dot in the tab bar when `true`.
+    pub active: bool,
+    /// Status line middle badge. When `Some`, replaces the "idle" label.
+    pub badge: Option<String>,
+}
 
 #[derive(Debug, Clone)]
 pub struct CommandDef {
@@ -49,9 +63,7 @@ pub struct TaskSnapshot {
     pub evicted_lines: u64,
     pub buffer_total_lines: u64,
     pub model: String,
-    pub conn: ConnState,
-    #[allow(dead_code)]
-    pub demo_running: bool,
+    pub internal: TaskInternalState,
     pub latest_recv: Option<serde_json::Value>,
     pub latest_recv_at: Option<chrono::DateTime<chrono::Local>>,
 }
@@ -88,6 +100,20 @@ pub trait TaskActor: Send + 'static {
 
     fn tick(&mut self) -> Vec<Message> { vec![] }
 
+    /// Tick interval in milliseconds. Override to change polling frequency.
+    fn tick_interval_ms(&self) -> u64 { 500 }
+
+    /// Snapshot push interval in milliseconds.
+    fn push_interval_ms(&self) -> u64 { 100 }
+
+    /// If the actor has a transport, return its event receiver so the
+    /// harness can select on it directly (no polling delay).
+    /// Default: a dummy channel that never fires.
+    fn take_transport_rx(&mut self) -> mpsc::Receiver<TransportEvent> {
+        let (_tx, rx) = mpsc::channel(1);
+        rx
+    }
+
     #[allow(dead_code)]
     fn on_transport(&mut self, _ev: TransportEvent) -> Vec<Message> { vec![] }
 
@@ -118,15 +144,17 @@ pub struct TaskHandle {
     pub state_rx: watch::Receiver<TaskSnapshot>,
 }
 
-pub fn spawn_actor(actor: impl TaskActor) -> TaskHandle {
+pub fn spawn_actor(mut actor: impl TaskActor) -> TaskHandle {
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(64);
     let snapshot = actor.snapshot();
     let (state_tx, state_rx) = watch::channel(snapshot);
 
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(Duration::from_millis(500));
-        let mut push = tokio::time::interval(Duration::from_millis(100));
-        let mut actor = actor;
+        let tick_ms = actor.tick_interval_ms();
+        let push_ms = actor.push_interval_ms();
+        let mut tick = tokio::time::interval(Duration::from_millis(tick_ms));
+        let mut push = tokio::time::interval(Duration::from_millis(push_ms));
+        let mut transport_rx = actor.take_transport_rx();
 
         loop {
             tokio::select! {
@@ -138,6 +166,14 @@ pub fn spawn_actor(actor: impl TaskActor) -> TaskHandle {
                         let sub = parts.get(1).copied();
                         let args: &[&str] = if parts.len() > 2 { &parts[2..] } else { &[] };
                         for m in actor.handle_command(cmd, sub, args) {
+                            actor.chat_mut().push_message(m);
+                        }
+                    }
+                    None => break,
+                },
+                maybe_ev = transport_rx.recv() => match maybe_ev {
+                    Some(ev) => {
+                        for m in actor.on_transport(ev) {
                             actor.chat_mut().push_message(m);
                         }
                     }
