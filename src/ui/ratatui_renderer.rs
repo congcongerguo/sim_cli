@@ -45,7 +45,7 @@ impl RatatuiRenderer {
             .split(area);
 
         // Tab bar
-        tab_bar::render(f, chunks[0], &state.tasks, state.active_task_index);
+        tab_bar::render(f, chunks[0], &state.tools, state.active_index);
 
         // Conversation + optional state panel
         let conv_area = chunks[1];
@@ -65,7 +65,7 @@ impl RatatuiRenderer {
             let tl = conversation::render_ratatui(
                 f, top[0], state, vh,
             );
-            state_panel::render(f, top[1], &state.internal);
+            state_panel::render(f, top[1], &state.state);
             (vh, tl)
         } else {
             let vh = conv_area.height;

@@ -3,18 +3,19 @@
 
 use std::sync::Arc;
 
-use crate::backend::{ModalRequest, TaskInfo, TaskInternalState};
+use crate::backend::ModalRequest;
 use crate::frontend::InputState;
 use crate::message::Message;
+use crate::tool::{ToolInfo, ToolState};
 
 /// Everything the renderer needs to draw one frame.
 pub struct RenderState {
     // ── From ViewState ──
     pub messages: Arc<Vec<Message>>,
     pub streaming: bool,
-    pub internal: TaskInternalState,
-    pub tasks: Arc<Vec<TaskInfo>>,
-    pub active_task_index: usize,
+    pub state: ToolState,
+    pub tools: Arc<Vec<ToolInfo>>,
+    pub active_index: usize,
 
     // ── Frontend interaction state ──
     pub input_text: String,

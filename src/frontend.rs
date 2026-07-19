@@ -89,9 +89,9 @@ impl Frontend {
         RenderState {
             messages: self.view.messages.clone(),
             streaming: self.view.streaming,
-            internal: self.view.internal.clone(),
-            tasks: self.view.tasks.clone(),
-            active_task_index: self.view.active_task_index,
+            state: self.view.state.clone(),
+            tools: self.view.tools.clone(),
+            active_index: self.view.active_index,
             input_text: self.current_text(),
             input_cursor: (0, 0),
             input_state: self.input_state(),
@@ -201,7 +201,7 @@ impl Frontend {
         }
 
         // "con " or "con t" → may be sub-context
-        let exact_match = self.view.active_commands.iter().any(|c| c.name == first && !c.subs.is_empty());
+        let exact_match = self.view.active_cmds.iter().any(|c| c.name == first && !c.subs.is_empty());
         if exact_match {
             let sub_prefix = if parts.len() >= 2 { parts[1].to_string() } else { String::new() };
             return CompletionCtx::Sub { cmd_name: first, prefix: sub_prefix };
@@ -218,13 +218,13 @@ impl Frontend {
     pub fn menu_items(&self) -> Vec<(String, String)> {
         match self.completion_ctx() {
             CompletionCtx::Command { prefix } => {
-                self.view.active_commands.iter()
+                self.view.active_cmds.iter()
                     .filter(|c| c.name.starts_with(&prefix))
                     .map(|c| (c.name.to_string(), c.desc.to_string()))
                     .collect()
             }
             CompletionCtx::Sub { cmd_name, prefix } => {
-                for c in self.view.active_commands.iter() {
+                for c in self.view.active_cmds.iter() {
                     if c.name == cmd_name {
                         return c.subs.iter()
                             .filter(|s| s.name.starts_with(&prefix))
@@ -255,7 +255,7 @@ impl Frontend {
         }
         match self.completion_ctx() {
             CompletionCtx::Command { prefix } => {
-                let matches: Vec<_> = self.view.active_commands.iter()
+                let matches: Vec<_> = self.view.active_cmds.iter()
                     .filter(|c| c.name.starts_with(&prefix))
                     .collect();
                 match matches.len() {
@@ -265,7 +265,7 @@ impl Frontend {
                 }
             }
             CompletionCtx::Sub { cmd_name, prefix } => {
-                for c in self.view.active_commands.iter() {
+                for c in self.view.active_cmds.iter() {
                     if c.name == cmd_name {
                         let matches: Vec<_> = c.subs.iter()
                             .filter(|s| s.name.starts_with(&prefix))
@@ -298,20 +298,20 @@ impl Frontend {
     }
 
     fn tab_next(&mut self) {
-        if self.view.tasks.len() <= 1 { return; }
-        let next = (self.view.active_task_index + 1) % self.view.tasks.len();
-        let name = self.view.tasks[next].name.clone();
+        if self.view.tools.len() <= 1 { return; }
+        let next = (self.view.active_index + 1) % self.view.tools.len();
+        let name = self.view.tools[next].name.clone();
         self.send(Command::TagSwitch(name));
     }
 
     fn tab_prev(&mut self) {
-        if self.view.tasks.len() <= 1 { return; }
-        let prev = if self.view.active_task_index == 0 {
-            self.view.tasks.len() - 1
+        if self.view.tools.len() <= 1 { return; }
+        let prev = if self.view.active_index == 0 {
+            self.view.tools.len() - 1
         } else {
-            self.view.active_task_index - 1
+            self.view.active_index - 1
         };
-        let name = self.view.tasks[prev].name.clone();
+        let name = self.view.tools[prev].name.clone();
         self.send(Command::TagSwitch(name));
     }
 
@@ -573,7 +573,7 @@ impl Frontend {
     fn expand_text(&self, text: String) -> String {
         match self.completion_ctx() {
             CompletionCtx::Command { prefix } => {
-                let matches: Vec<_> = self.view.active_commands.iter()
+                let matches: Vec<_> = self.view.active_cmds.iter()
                     .filter(|c| c.name.starts_with(&prefix))
                     .collect();
                 if matches.len() == 1 && matches[0].name != prefix {
@@ -581,7 +581,7 @@ impl Frontend {
                 }
             }
             CompletionCtx::Sub { cmd_name, prefix } => {
-                for c in self.view.active_commands.iter() {
+                for c in self.view.active_cmds.iter() {
                     if c.name == cmd_name {
                         let matches: Vec<_> = c.subs.iter()
                             .filter(|s| s.name.starts_with(&prefix))

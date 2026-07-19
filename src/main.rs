@@ -9,25 +9,17 @@ mod message;
 mod mock_llm;
 mod proto;
 mod terminal;
+mod tool;
 mod transport;
 mod ui;
 
 use anyhow::Result;
-use clap::Parser;
 use tokio::sync::{mpsc, watch};
 
 use crate::backend::{Command, ViewState};
 
-#[derive(Parser, Debug)]
-#[command(name = "sim_cli", about = "Claude Code 风格交互 CLI 演示")]
-struct Args {
-    #[arg(long, default_value = "claude")]
-    model: String,
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
-    let _args = Args::parse();
 
     let _guard = terminal::install()?;
     let mut term = terminal::new_terminal()?;

@@ -7,14 +7,14 @@ use ratatui::widgets::Paragraph;
 use crate::ui::render_state::RenderState;
 
 pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState) {
-    let left_text = if let Some(ref badge) = state.internal.badge {
+    let left_text = if let Some(ref badge) = state.state.badge {
         format!(" {badge} ")
     } else {
         " net: off ".to_string()
     };
-    let left_bg = if state.internal.active {
+    let left_bg = if state.state.active {
         Color::Green
-    } else if state.internal.badge.is_some() {
+    } else if state.state.badge.is_some() {
         Color::DarkGray
     } else {
         Color::DarkGray

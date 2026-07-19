@@ -5,9 +5,9 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use serde_json::Value;
 
-use crate::backend::TaskInternalState;
+use crate::tool::ToolState;
 
-pub fn render(f: &mut Frame, area: Rect, internal: &TaskInternalState) {
+pub fn render(f: &mut Frame, area: Rect, state: &ToolState) {
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray))
@@ -27,20 +27,20 @@ pub fn render(f: &mut Frame, area: Rect, internal: &TaskInternalState) {
 
     let mut lines: Vec<Line<'static>> = Vec::new();
 
-    if internal.fields.is_empty() {
+    if state.fields.is_empty() {
         lines.push(Line::from(Span::styled(
             "(no data yet)",
             Style::default().fg(Color::DarkGray),
         )));
     } else {
-        let key_w = internal.fields.iter()
+        let key_w = state.fields.iter()
             .map(|(k, _)| k.chars().count())
             .max()
             .unwrap_or(0)
             .min(((inner.width as usize) / 2).max(1))
             .min(20);
         let value_w = (inner.width as usize).saturating_sub(key_w + 1);
-        for (k, val) in &internal.fields {
+        for (k, val) in &state.fields {
             let key = truncate(k, key_w);
             let value = truncate(val, value_w);
             lines.push(Line::from(vec![
@@ -59,7 +59,7 @@ pub fn render(f: &mut Frame, area: Rect, internal: &TaskInternalState) {
 }
 
 /// Recursively flatten a JSON value into dot-separated key-value pairs.
-/// Public so task actors can convert received JSON into [`TaskInternalState::fields`].
+/// Public so tools can flatten received JSON into [`ToolState::fields`].
 pub fn flatten_json(prefix: &str, v: &Value, out: &mut Vec<(String, String)>) {
     match v {
         Value::Object(map) => {

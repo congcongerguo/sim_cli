@@ -1,8 +1,7 @@
 use std::collections::HashSet;
 
+use crate::log_buffer::LogBuffer;
 use crate::message::{Message, ToolCall, ToolStatus};
-
-use super::chat::ChatState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModalChoice {
@@ -42,7 +41,7 @@ impl ModalSubsystem {
         &mut self,
         tool_name: String,
         args_preview: String,
-        chat: &mut ChatState,
+        chat: &mut LogBuffer,
     ) {
         let auto = self.allow_always.contains(&tool_name);
         let status = if auto {
@@ -50,14 +49,14 @@ impl ModalSubsystem {
         } else {
             ToolStatus::AwaitingPermission
         };
-        chat.messages.push(Message::Tool(ToolCall {
+        chat.push(Message::Tool(ToolCall {
             name: tool_name.clone(),
             args_preview: args_preview.clone(),
             status,
             output: String::new(),
         }));
         if !auto {
-            let idx = chat.messages.len() - 1;
+            let idx = chat.len() - 1;
             self.request = Some(ModalRequest {
                 tool_index: idx,
                 tool_name,
@@ -66,25 +65,25 @@ impl ModalSubsystem {
         }
     }
 
-    pub fn finish_tool(&mut self, output: String, chat: &mut ChatState) {
-        if let Some(Message::Tool(t)) = chat.messages.last_mut()
+    pub fn finish_tool(&mut self, output: String, chat: &mut LogBuffer) {
+        if let Some(Message::Tool(t)) = chat.last_mut()
             && t.status != ToolStatus::Denied
         {
             t.status = ToolStatus::Done;
             t.output = output;
         }
-        chat.messages.push(Message::Assistant {
+        chat.push(Message::Assistant {
             text: String::new(),
             streaming: true,
         });
     }
 
-    pub fn resolve(&mut self, choice: ModalChoice, chat: &mut ChatState) {
+    pub fn resolve(&mut self, choice: ModalChoice, chat: &mut LogBuffer) {
         let req = match self.request.take() {
             Some(r) => r,
             None => return,
         };
-        if let Some(Message::Tool(t)) = chat.messages.get_mut(req.tool_index) {
+        if let Some(Message::Tool(t)) = chat.get_mut(req.tool_index) {
             match choice {
                 ModalChoice::Yes => t.status = ToolStatus::Running,
                 ModalChoice::Always => {

@@ -1,8 +1,7 @@
 mod chat;
-mod conn;
+pub mod conn;
 mod llm;
 mod modal;
-pub mod task;
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,17 +9,18 @@ use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 
 use crate::message::{LogLevel, Message};
+use crate::tool;
+use crate::tool::{ToolHandle, ToolInfo, ToolState};
 
 pub use chat::Mode;
 pub use modal::{ModalChoice, ModalRequest};
-pub use task::TaskInternalState;
-pub use task::registry::{TaskInfo, TASK_DEFS};
+pub use tool::registry::TOOL_DEFS;
 
 #[derive(Debug)]
 pub enum Command {
     Input(String),
     TagSwitch(String),
-    Permission(ModalChoice),
+    Permission(#[allow(dead_code)] ModalChoice),
 }
 
 #[derive(Debug, Clone)]
@@ -30,53 +30,50 @@ pub struct ViewState {
     pub streaming: bool,
     pub modal: Option<ModalRequest>,
     pub should_quit: bool,
-    pub internal: TaskInternalState,
-    pub tasks: Arc<Vec<TaskInfo>>,
-    pub active_task_index: usize,
-    pub active_commands: Arc<Vec<task::CommandDef>>,
+    pub state: ToolState,
+    pub tools: Arc<Vec<ToolInfo>>,
+    pub active_index: usize,
+    pub active_cmds: Arc<Vec<tool::Cmd>>,
     pub evicted_lines: u64,
     pub buffer_total_lines: u64,
 }
 
 impl ViewState {
     pub fn initial() -> Self {
-        let (tasks, first_name) = if TASK_DEFS.is_empty() {
-            (vec![], String::new())
-        } else {
-            let d = &TASK_DEFS[0];
-            let tasks: Vec<TaskInfo> = TASK_DEFS.iter()
-                .map(|d| TaskInfo { name: d.name.into(), active: false })
-                .collect();
-            (tasks, d.name.to_string())
-        };
-        let msg = if first_name.is_empty() {
-            "no tasks configured — check tasks.toml and features".to_string()
-        } else {
-            format!("[{}] {} — type 'help' for commands", first_name, TASK_DEFS[0].hint)
+        let tools: Vec<ToolInfo> = TOOL_DEFS.iter()
+            .map(|d| ToolInfo { name: d.name.into(), active: false })
+            .collect();
+        let first = TOOL_DEFS.first();
+        let msg = match first {
+            Some(d) => format!("[{}] {} — type 'help' for commands", d.name, d.hint),
+            None => "no tools configured — check tasks.toml and features".to_string(),
         };
         Self {
             messages: Arc::new(vec![
                 Message::System { text: msg, level: LogLevel::Notice },
             ]),
-            mode: Mode::Normal, streaming: false, modal: None, should_quit: false,
-            internal: TaskInternalState::default(),
-            tasks: Arc::new(tasks),
-            active_task_index: 0,
-            active_commands: Arc::new(vec![]),
+            mode: Mode::Normal,
+            streaming: false,
+            modal: None,
+            should_quit: false,
+            state: ToolState::default(),
+            tools: Arc::new(tools),
+            active_index: 0,
+            active_cmds: Arc::new(vec![]),
             evicted_lines: 0,
             buffer_total_lines: 0,
         }
     }
 }
 
-struct TaskRuntime {
+struct ToolEntry {
     name: String,
-    handle: task::TaskHandle,
-    commands: Arc<Vec<task::CommandDef>>,
+    handle: ToolHandle,
+    cmds: Arc<Vec<tool::Cmd>>,
 }
 
 pub struct Router {
-    tasks: Vec<TaskRuntime>,
+    tools: Vec<ToolEntry>,
     active: usize,
     should_quit: bool,
     modal: modal::ModalSubsystem,
@@ -84,39 +81,33 @@ pub struct Router {
 
 impl Router {
     pub fn new() -> Self {
-        let tasks: Vec<TaskRuntime> = TASK_DEFS.iter().filter_map(|def| {
-            task::create_actor(def.name, def).map(|rt| TaskRuntime {
-                name: def.name.to_string(),
-                handle: rt.handle,
-                commands: rt.commands,
-            })
+        let tools: Vec<ToolEntry> = TOOL_DEFS.iter().filter_map(|def| {
+            let (handle, cmds) = tool::create(def);
+            Some(ToolEntry { name: def.name.to_string(), handle, cmds })
         }).collect();
-        assert!(!tasks.is_empty(), "no task actors created — check features and tasks.toml");
-        Self { tasks, active: 0, should_quit: false, modal: modal::ModalSubsystem::new() }
+        assert!(!tools.is_empty(), "no tools created — check features and tasks.toml");
+        Self { tools, active: 0, should_quit: false, modal: modal::ModalSubsystem::new() }
     }
 
     fn build_view(&self) -> ViewState {
-        let task_infos: Vec<TaskInfo> = self.tasks.iter().map(|rt| {
-            let snap = rt.handle.state_rx.borrow();
-            TaskInfo {
-                name: snap.name.clone(),
-                active: snap.internal.active,
-            }
+        let tool_infos: Vec<ToolInfo> = self.tools.iter().map(|t| {
+            let snap = t.handle.view_rx.borrow();
+            ToolInfo { name: snap.name.clone(), active: snap.state.active }
         }).collect();
 
-        let active_rt = &self.tasks[self.active];
-        let snap = active_rt.handle.state_rx.borrow().clone();
+        let active = &self.tools[self.active];
+        let snap = active.handle.view_rx.borrow().clone();
 
         ViewState {
-            messages: snap.messages.clone(),
+            messages: snap.messages,
             mode: Mode::Normal,
             streaming: false,
             modal: self.modal.request.clone(),
             should_quit: self.should_quit,
-            internal: snap.internal,
-            tasks: Arc::new(task_infos),
-            active_task_index: self.active,
-            active_commands: active_rt.commands.clone(),
+            state: snap.state,
+            tools: Arc::new(tool_infos),
+            active_index: self.active,
+            active_cmds: active.cmds.clone(),
             evicted_lines: snap.evicted_lines,
             buffer_total_lines: snap.buffer_total_lines,
         }
@@ -137,15 +128,15 @@ pub async fn run(
                     if text.trim() == "exit" {
                         router.should_quit = true;
                     } else {
-                        let _ = router.tasks[router.active].handle.cmd_tx.try_send(text);
+                        let _ = router.tools[router.active].handle.cmd_tx.try_send(text);
                     }
                 }
                 Some(Command::TagSwitch(name)) => {
-                    if let Some(pos) = router.tasks.iter().position(|rt| rt.name == name) {
+                    if let Some(pos) = router.tools.iter().position(|t| t.name == name) {
                         router.active = pos;
                     }
                 }
-                Some(Command::Permission(_choice)) => {}
+                Some(Command::Permission(_)) => {}
                 None => break,
             },
             _ = tick.tick() => {}
