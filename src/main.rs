@@ -1,4 +1,5 @@
 mod backend;
+#[cfg(feature = "mock-llm")]
 mod event;
 mod frontend;
 mod json_framer;

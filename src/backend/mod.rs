@@ -82,8 +82,7 @@ pub struct Router {
 impl Router {
     pub fn new() -> Self {
         let tools: Vec<ToolEntry> = TOOL_DEFS.iter().filter_map(|def| {
-            let (handle, cmds) = tool::create(def);
-            Some(ToolEntry { name: def.name.to_string(), handle, cmds })
+            tool::create(def).map(|(handle, cmds)| ToolEntry { name: def.name.to_string(), handle, cmds })
         }).collect();
         assert!(!tools.is_empty(), "no tools created — check features and tasks.toml");
         Self { tools, active: 0, should_quit: false, modal: modal::ModalSubsystem::new() }

@@ -13,7 +13,7 @@ fn main() -> Result<()> {
     println!("cargo:rerun-if-changed={}", tasks_toml.display());
 
     let content = fs::read_to_string(tasks_toml)?;
-    let config: TaskConfig = toml::from_str(&content)
+    let config: ToolConfig = toml::from_str(&content)
         .expect("failed to parse tasks.toml");
 
     let out_dir = std::env::var("OUT_DIR").unwrap();
@@ -23,7 +23,7 @@ fn main() -> Result<()> {
          pub const TOOL_DEFS: &[ToolDef] = &[\n",
     );
 
-    for task in &config.task {
+    for tool in &config.tool {
         let addr = |v: &Option<String>| match v {
             Some(s) => format!("Some(\"{s}\")"),
             None => "None".to_string(),
@@ -36,10 +36,10 @@ fn main() -> Result<()> {
              \x20       zmq_sub_addr: {},\n\
              \x20       zmq_pub_addr: {},\n\
              \x20   }},\n",
-            task.name, task.hint,
-            addr(&task.tcp_addr),
-            addr(&task.zmq_sub_addr),
-            addr(&task.zmq_pub_addr),
+            tool.name, tool.hint,
+            addr(&tool.tcp_addr),
+            addr(&tool.zmq_sub_addr),
+            addr(&tool.zmq_pub_addr),
         ));
     }
     code.push_str("];\n");
@@ -48,17 +48,14 @@ fn main() -> Result<()> {
 }
 
 #[derive(serde::Deserialize)]
-struct TaskConfig {
-    task: Vec<TaskDefToml>,
+struct ToolConfig {
+    tool: Vec<ToolDefToml>,
 }
 
 #[derive(serde::Deserialize)]
-struct TaskDefToml {
+struct ToolDefToml {
     name: String,
     hint: String,
-    #[serde(default)]
-    #[allow(dead_code)]
-    commands: Vec<String>,
     tcp_addr: Option<String>,
     zmq_sub_addr: Option<String>,
     zmq_pub_addr: Option<String>,

@@ -1,12 +1,9 @@
-# Task tab definitions. Add a [[task]] block to create a new tab.
-# commands = [] means all commands are allowed.
+# Tool tab definitions. Add a [[tool]] block to create a new tab.
 
-[[task]]
+[[tool]]
 name = "conn"
 hint = "transport     —  con zmq|tcp / close / send"
-commands = ["help", "clear", "exit", "con", "close", "send"]
 
-[[task]]
+[[tool]]
 name = "demo"
 hint = "log demo      —  start / stop"
-commands = ["help", "clear", "exit", "start", "stop"]

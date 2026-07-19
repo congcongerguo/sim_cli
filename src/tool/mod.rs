@@ -130,9 +130,8 @@ pub struct ToolInfo {
 
 // ── spawn ──────────────────────────────────────────────────────────────
 
-pub fn spawn(name: String, tool: impl Tool) -> ToolHandle {
+pub fn spawn(name: String, tool: impl Tool, cmds: Arc<Vec<Cmd>>) -> ToolHandle {
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(64);
-    let cmds = Arc::new(build_cmds(tool.commands()));
     let initial = ViewUpdate {
         name: name.clone(),
         messages: Arc::new(vec![]),
@@ -166,7 +165,7 @@ pub fn spawn(name: String, tool: impl Tool) -> ToolHandle {
 
                         let msgs = match cmd {
                             "help" => build_help(&cmds),
-                            "clear" => { ctx.log.clear(); continue; }
+                            "clear" => { ctx.log.clear(); ctx.log.push(msg("conversation cleared", LogLevel::Notice)); continue; }
                             _ => ctx.tool.handle(cmd, args),
                         };
                         for m in msgs { ctx.log.push(m); }
@@ -225,18 +224,18 @@ pub fn msg(text: &str, level: LogLevel) -> Message {
 use registry::ToolDef;
 
 /// 根据 tool 名创建实例。由 Router 调用。
-pub fn create(def: &'static ToolDef) -> (ToolHandle, Arc<Vec<Cmd>>) {
+pub fn create(def: &'static ToolDef) -> Option<(ToolHandle, Arc<Vec<Cmd>>)> {
     #[cfg(feature = "conn-task")]
     if def.name == "conn" {
         let tool = conn::ConnTool::new(def);
         let cmds = Arc::new(build_cmds(tool.commands()));
-        return (spawn(def.name.to_string(), tool), cmds);
+        return Some((spawn(def.name.to_string(), tool, cmds.clone()), cmds));
     }
     #[cfg(feature = "demo-task")]
     if def.name == "demo" {
         let tool = demo::DemoTool::new();
         let cmds = Arc::new(build_cmds(tool.commands()));
-        return (spawn(def.name.to_string(), tool), cmds);
+        return Some((spawn(def.name.to_string(), tool, cmds.clone()), cmds));
     }
-    panic!("unknown tool: {}", def.name);
+    None
 }
