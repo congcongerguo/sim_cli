@@ -1,5 +1,3 @@
-use std::cell::Cell;
-
 use anyhow::Result;
 use crossterm::event::{
     Event as CtEvent, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
@@ -35,8 +33,9 @@ enum CompletionCtx {
 
 pub struct Frontend {
     pub input: TextArea<'static>,
-    pub(crate) scroll: Cell<u64>,
-    pub(crate) follow_tail: Cell<bool>,
+    /// All conversation scroll-back state (position, follow-tail, unseen count,
+    /// cached viewport) in one place. See [`crate::scroll::Scrollback`].
+    pub(crate) scrollback: crate::scroll::Scrollback,
     pub(crate) menu_idx: usize,
     pub(crate) tab_cycle: Option<TabCycle>,
     #[allow(dead_code)]
@@ -48,12 +47,6 @@ pub struct Frontend {
     view_rx: watch::Receiver<ViewState>,
     history: Vec<String>,
     history_cursor: Option<usize>,
-    pub(crate) viewport_height: Cell<u16>,
-    pub(crate) prev_total_lines: Cell<u32>,
-    /// Lines added since user scrolled up (0 = following or content fits).
-    unseen_lines: Cell<u32>,
-    /// Total lines the last time we were in follow mode.
-    total_at_follow: Cell<u32>,
 }
 
 impl Frontend {
@@ -64,8 +57,7 @@ impl Frontend {
         let view = view_rx.borrow().clone();
         Self {
             input,
-            scroll: Cell::new(0u64),
-            follow_tail: Cell::new(true),
+            scrollback: crate::scroll::Scrollback::default(),
             menu_idx: 0,
             tab_cycle: None,
             demo_idx: 0,
@@ -76,10 +68,6 @@ impl Frontend {
             view_rx,
             history: Vec::new(),
             history_cursor: None,
-            viewport_height: Cell::new(20),
-            prev_total_lines: Cell::new(0u32),
-            unseen_lines: Cell::new(0),
-            total_at_follow: Cell::new(0),
         }
     }
 
@@ -98,10 +86,9 @@ impl Frontend {
             menu_items: menu.into_iter().map(|(a, b)| (a.to_string(), b.to_string())).collect(),
             menu_idx: self.menu_idx,
             menu_title: self.menu_title(),
-            scroll_offset: self.scroll.get(),
-            follow_tail: self.follow_tail.get(),
-            prev_total_lines: self.prev_total_lines.get(),
-            unseen_lines: self.unseen_lines.get(),
+            scroll_offset: self.scrollback.offset(),
+            follow_tail: self.scrollback.follow_tail(),
+            unseen_lines: self.scrollback.unseen(),
             evicted_lines: self.view.evicted_lines,
             buffer_total_lines: self.view.buffer_total_lines,
             panel_visible: self.panel_visible,
@@ -110,30 +97,20 @@ impl Frontend {
         }
     }
 
-    /// 每帧渲染后：更新视口大小、计算未读行数。
-    ///
-    /// 当 follow_tail 为 false（用户翻上去了），unseen_lines 统计
-    /// 从离开跟尾模式以来新增的行数，驱动 "▼ N new" 提示。
-    fn apply_output(&self, out: &crate::ui::render_state::RenderOutput) {
-        let tl = out.total_lines as u32;
-        if self.follow_tail.get() {
-            self.unseen_lines.set(0);
-            self.total_at_follow.set(tl);
-        } else {
-            let unseen = tl.saturating_sub(self.total_at_follow.get());
-            self.unseen_lines.set(unseen);
-        }
-        self.viewport_height.set(out.viewport_height);
-        self.prev_total_lines.set(out.total_lines as u32);
+    /// 每帧渲染后：记录视口尺寸并刷新未读行数(驱动 "▼ N new" 提示)。
+    fn apply_output(&mut self, out: &crate::ui::render_state::RenderOutput) {
+        self.scrollback.on_frame(out.viewport_height, out.total_lines as u64);
     }
 
     pub async fn run<B: Backend>(&mut self, term: &mut Terminal<B>) -> Result<()> {
         let mut events = EventStream::new();
         loop {
             let state = self.build_render_state();
+            // Seed values are overwritten by the draw closure below; only the
+            // viewport matters if the closure somehow doesn't run.
             let mut render_out = crate::ui::render_state::RenderOutput {
-                viewport_height: self.viewport_height.get(),
-                total_lines: self.prev_total_lines.get() as u16,
+                viewport_height: self.scrollback.viewport(),
+                total_lines: 0,
             };
             term.draw(|f| {
                 render_out = crate::ui::ratatui_renderer::RatatuiRenderer::draw(f, &state);
@@ -299,16 +276,6 @@ impl Frontend {
         }
     }
 
-    /// 从当前 ViewState 快照构建 ScrollInput。
-    /// 每次 PageUp/Down/Home/End 按键时调用。
-    fn scroll_input(&self) -> crate::scroll::ScrollInput {
-        crate::scroll::ScrollInput {
-            viewport: self.viewport_height.get(),
-            total_lines: self.view.buffer_total_lines,
-            evicted_lines: self.view.evicted_lines,
-        }
-    }
-
     fn send(&self, cmd: Command) {
         let _ = self.cmd_tx.try_send(cmd);
     }
@@ -349,38 +316,19 @@ impl Frontend {
                 return;
             }
             (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {
-                let input = self.scroll_input();
-                let state = crate::scroll::ScrollState {
-                    offset: self.scroll.get(),
-                    follow_tail: self.follow_tail.get(),
-                };
-                let result = crate::scroll::page_up(&state, &input);
-                self.scroll.set(result.offset);
-                self.follow_tail.set(result.follow_tail);
+                self.scrollback.page_up(self.view.buffer_total_lines, self.view.evicted_lines);
                 return;
             }
             (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
-                let input = self.scroll_input();
-                let state = crate::scroll::ScrollState {
-                    offset: self.scroll.get(),
-                    follow_tail: self.follow_tail.get(),
-                };
-                let result = crate::scroll::page_down(&state, &input);
-                self.scroll.set(result.offset);
-                self.follow_tail.set(result.follow_tail);
+                self.scrollback.page_down(self.view.buffer_total_lines, self.view.evicted_lines);
                 return;
             }
             (KeyCode::Home, _) => {
-                let input = self.scroll_input();
-                let result = crate::scroll::home(&input);
-                self.scroll.set(result.offset);
-                self.follow_tail.set(result.follow_tail);
+                self.scrollback.home(self.view.buffer_total_lines, self.view.evicted_lines);
                 return;
             }
             (KeyCode::End, _) => {
-                let result = crate::scroll::end();
-                self.scroll.set(result.offset);
-                self.follow_tail.set(result.follow_tail);
+                self.scrollback.end();
                 return;
             }
             (KeyCode::Char('g'), KeyModifiers::CONTROL) => {
