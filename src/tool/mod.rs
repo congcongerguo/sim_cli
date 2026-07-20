@@ -17,7 +17,7 @@ use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 
 use crate::log_buffer::LogBuffer;
-use crate::message::{LogLevel, Message};
+use crate::message::{LogLevel, Message, TimedMessage};
 use crate::transport::TransportEvent;
 
 // ── 基础命令 ──────────────────────────────────────────────────────────
@@ -108,7 +108,7 @@ struct ToolCtx {
 #[derive(Debug, Clone)]
 pub struct ViewUpdate {
     pub name: String,
-    pub messages: Arc<Vec<Message>>,
+    pub messages: Arc<Vec<TimedMessage>>,
     pub evicted_lines: u64,
     pub buffer_total_lines: u64,
     pub state: ToolState,
@@ -167,24 +167,22 @@ pub fn spawn(name: String, tool: impl Tool, cmds: Arc<Vec<Cmd>>) -> ToolHandle {
                             "help" => build_help(&cmds),
                             "clear" => {
                                 ctx.log.clear();
-                                let m = msg("conversation cleared", LogLevel::Notice);
-                                crate::msg_log::record(&ctx.name, &m);
-                                ctx.log.push(m);
+                                log_msg(&mut ctx.log, &ctx.name, msg("conversation cleared", LogLevel::Notice));
                                 continue;
                             }
                             _ => ctx.tool.handle(cmd, args),
                         };
-                        for m in msgs { crate::msg_log::record(&ctx.name, &m); ctx.log.push(m); }
+                        for m in msgs { log_msg(&mut ctx.log, &ctx.name, m); }
                     }
                     None => break,
                 },
                 maybe_ev = transport_rx.recv() => {
                     if let Some(ev) = maybe_ev {
-                        for m in ctx.tool.on_transport(ev) { crate::msg_log::record(&ctx.name, &m); ctx.log.push(m); }
+                        for m in ctx.tool.on_transport(ev) { log_msg(&mut ctx.log, &ctx.name, m); }
                     }
                 }
                 _ = tick.tick() => {
-                    for m in ctx.tool.tick() { crate::msg_log::record(&ctx.name, &m); ctx.log.push(m); }
+                    for m in ctx.tool.tick() { log_msg(&mut ctx.log, &ctx.name, m); }
                 }
                 _ = push.tick() => {
                     let _ = view_tx.send(ViewUpdate {
@@ -223,6 +221,14 @@ fn build_help(cmds: &[Cmd]) -> Vec<Message> {
 /// 创建一条系统消息。
 pub fn msg(text: &str, level: LogLevel) -> Message {
     Message::System { text: text.into(), level }
+}
+
+/// 用同一时间戳把消息写入界面缓冲区并落盘到消息日志文件,
+/// 保证屏幕上显示的时间与日志文件中的时间完全一致。
+fn log_msg(log: &mut LogBuffer, tool: &str, m: Message) {
+    let time = chrono::Local::now();
+    crate::msg_log::record_at(time, tool, &m);
+    log.push_at(time, m);
 }
 
 // ── 工厂函数 ──────────────────────────────────────────────────────────

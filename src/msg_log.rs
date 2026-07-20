@@ -12,7 +12,7 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::sync::{Mutex, OnceLock};
 
-use crate::message::{LogLevel, Message};
+use crate::message::{LogLevel, Message, Timestamp};
 
 /// 进程内唯一的日志文件句柄。`None` 表示打开失败(降级为不记录)。
 static LOG_FILE: OnceLock<Mutex<Option<File>>> = OnceLock::new();
@@ -68,20 +68,26 @@ fn one_line(s: &str) -> String {
 
 /// 构造一条完整记录行(含毫秒时间戳,不含结尾换行)。
 /// 时间戳采用本地时区,格式 `YYYY-MM-DD HH:MM:SS.mmm`。
-fn format_line(tool: &str, msg: &Message) -> String {
-    let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+fn format_line(time: Timestamp, tool: &str, msg: &Message) -> String {
+    let ts = time.format("%Y-%m-%d %H:%M:%S%.3f");
     format!("{ts} [{tool}] {}", body(msg))
 }
 
-/// 追加记录一条消息。时间戳精确到毫秒(本地时区)。
+/// 用指定时间戳追加记录一条消息,让界面展示与落盘共用同一时刻。
 /// 写入失败或文件未打开时静默返回。
-pub fn record(tool: &str, msg: &Message) {
-    let line = format!("{}\n", format_line(tool, msg));
+pub fn record_at(time: Timestamp, tool: &str, msg: &Message) {
+    let line = format!("{}\n", format_line(time, tool, msg));
     if let Ok(mut guard) = file_cell().lock() {
         if let Some(f) = guard.as_mut() {
             let _ = f.write_all(line.as_bytes());
         }
     }
+}
+
+/// 追加记录一条消息,时间戳取当前本地时间(毫秒精度)。
+#[allow(dead_code)]
+pub fn record(tool: &str, msg: &Message) {
+    record_at(chrono::Local::now(), tool, msg);
 }
 
 #[cfg(test)]
@@ -94,10 +100,14 @@ mod tests {
         "2026-07-20 14:23:01.123".len()
     }
 
+    fn now() -> Timestamp {
+        chrono::Local::now()
+    }
+
     #[test]
     fn line_starts_with_millisecond_timestamp() {
         let m = Message::System { text: "hello".into(), level: LogLevel::Info };
-        let line = format_line("conn", &m);
+        let line = format_line(now(), "conn", &m);
         let ts = &line[..ts_prefix_len()];
         // Exactly three fractional-second digits.
         let (_, frac) = ts.split_once('.').expect("timestamp has fractional part");
@@ -116,14 +126,14 @@ mod tests {
             (LogLevel::Debug, "DEBUG"),
         ] {
             let m = Message::System { text: "x".into(), level: lvl };
-            assert!(format_line("t", &m).contains(&format!("[t] {name} x")));
+            assert!(format_line(now(), "t", &m).contains(&format!("[t] {name} x")));
         }
     }
 
     #[test]
     fn multiline_text_collapsed_to_one_line() {
         let m = Message::System { text: "a\nb\nc".into(), level: LogLevel::Info };
-        let line = format_line("t", &m);
+        let line = format_line(now(), "t", &m);
         assert!(!line.contains('\n'), "record must stay on a single line");
         assert!(line.contains("a ⏎ b ⏎ c"));
     }
@@ -161,12 +171,12 @@ mod tests {
             status: ToolStatus::Done,
             output: "file1\nfile2".into(),
         });
-        let line = format_line("demo", &tool);
+        let line = format_line(now(), "demo", &tool);
         assert!(line.contains("TOOL ls"));
         assert!(line.contains("Done"));
         assert!(line.contains("file1 ⏎ file2"));
 
         let asst = Message::Assistant { text: "hi".into(), streaming: true };
-        assert!(format_line("demo", &asst).contains("ASSISTANT* hi"));
+        assert!(format_line(now(), "demo", &asst).contains("ASSISTANT* hi"));
     }
 }
