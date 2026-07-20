@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use tokio::sync::{mpsc, watch};
 
-use crate::message::{LogLevel, Message};
+use crate::message::{LogLevel, Message, TimedMessage};
 use crate::tool;
 use crate::tool::{ToolHandle, ToolInfo, ToolState};
 
@@ -25,7 +25,7 @@ pub enum Command {
 
 #[derive(Debug, Clone)]
 pub struct ViewState {
-    pub messages: Arc<Vec<Message>>,
+    pub messages: Arc<Vec<TimedMessage>>,
     pub mode: Mode,
     pub streaming: bool,
     pub modal: Option<ModalRequest>,
@@ -50,7 +50,10 @@ impl ViewState {
         };
         Self {
             messages: Arc::new(vec![
-                Message::System { text: msg, level: LogLevel::Notice },
+                TimedMessage {
+                    time: chrono::Local::now(),
+                    msg: Message::System { text: msg, level: LogLevel::Notice },
+                },
             ]),
             mode: Mode::Normal,
             streaming: false,

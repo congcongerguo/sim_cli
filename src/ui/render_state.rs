@@ -5,13 +5,13 @@ use std::sync::Arc;
 
 use crate::backend::ModalRequest;
 use crate::frontend::InputState;
-use crate::message::Message;
+use crate::message::TimedMessage;
 use crate::tool::{ToolInfo, ToolState};
 
 /// Everything the renderer needs to draw one frame.
 pub struct RenderState {
     // ── From ViewState ──
-    pub messages: Arc<Vec<Message>>,
+    pub messages: Arc<Vec<TimedMessage>>,
     pub streaming: bool,
     pub state: ToolState,
     pub tools: Arc<Vec<ToolInfo>>,

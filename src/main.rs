@@ -6,6 +6,7 @@ mod json_framer;
 mod log_buffer;
 mod scroll;
 mod message;
+mod msg_log;
 #[cfg(feature = "mock-llm")]
 mod mock_llm;
 mod proto;

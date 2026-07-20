@@ -28,7 +28,7 @@
 
 use std::collections::VecDeque;
 
-use crate::message::Message;
+use crate::message::{Message, TimedMessage, Timestamp};
 
 pub const DEFAULT_MAX: usize = 100;
 
@@ -53,7 +53,7 @@ pub fn msg_line_count(msg: &Message) -> u64 {
 
 #[derive(Debug, Clone)]
 pub struct LogBuffer {
-    messages: VecDeque<Message>,
+    messages: VecDeque<TimedMessage>,
     max_entries: usize,
     total_evicted: u64,      // count of messages evicted
     total_lines: u64,        // current render line count
@@ -68,14 +68,21 @@ impl LogBuffer {
         }
     }
 
-    /// Add a message. If over capacity, evicts oldest.
+    /// Add a message, stamping it with the current local time.
+    /// If over capacity, evicts oldest.
     pub fn push(&mut self, msg: Message) {
+        self.push_at(chrono::Local::now(), msg);
+    }
+
+    /// Add a message with an explicit timestamp. Lets the caller share one
+    /// timestamp between the on-screen entry and the message log file.
+    pub fn push_at(&mut self, time: Timestamp, msg: Message) {
         let added = msg_line_count(&msg);
-        self.messages.push_back(msg);
+        self.messages.push_back(TimedMessage { time, msg });
         self.total_lines += added;
         while self.messages.len() > self.max_entries {
             if let Some(old) = self.messages.pop_front() {
-                let old_lines = msg_line_count(&old);
+                let old_lines = msg_line_count(&old.msg);
                 self.total_lines -= old_lines;
                 self.evicted_lines += old_lines;
                 self.total_evicted += 1;
@@ -120,28 +127,28 @@ impl LogBuffer {
     /// Iterate messages from oldest to newest.
     #[allow(dead_code)]
     pub fn iter(&self) -> impl Iterator<Item = &Message> {
-        self.messages.iter()
+        self.messages.iter().map(|e| &e.msg)
     }
 
     /// Mutable reference to the last message (for streaming updates).
     pub fn last_mut(&mut self) -> Option<&mut Message> {
-        self.messages.back_mut()
+        self.messages.back_mut().map(|e| &mut e.msg)
     }
 
     /// Mutable reference by index (for tool call lookups).
     pub fn get_mut(&mut self, index: usize) -> Option<&mut Message> {
-        self.messages.get_mut(index)
+        self.messages.get_mut(index).map(|e| &mut e.msg)
     }
 
     /// Clone all messages into a Vec (for tests).
     #[allow(dead_code)]
     pub fn to_vec(&self) -> Vec<Message> {
-        self.messages.iter().cloned().collect()
+        self.messages.iter().map(|e| e.msg.clone()).collect()
     }
 
     /// Return a shared snapshot of the current buffer. Use this for ViewState
     /// to avoid re-cloning the entire buffer every frame.
-    pub fn to_arc(&self) -> std::sync::Arc<Vec<Message>> {
+    pub fn to_arc(&self) -> std::sync::Arc<Vec<TimedMessage>> {
         std::sync::Arc::new(self.messages.iter().cloned().collect())
     }
 }
