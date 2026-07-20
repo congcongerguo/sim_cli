@@ -52,24 +52,23 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState, visible: u
         all.pop();
     }
 
-    // total_lines 来自 LogBuffer 增量维护（O(1)），不是 all.len()
+    // total_lines 来自 LogBuffer（消息渲染行数），不是 all.len()
     let total_lines = state.buffer_total_lines as u16;
     let block = Block::default();
 
-    // 绝对行号 → 缓冲区内相对位置
-    //   offset  = 绝对行号（从第一条消息算起）
-    //   evicted = 累计淘汰行数
-    //   adjusted = offset - evicted = 当前缓冲区内位置
-    // 饱和运算保证不会出现负数，限制在 [0, max_scroll] 内
-    let max_scroll = total_lines.saturating_sub(visible);
-    let scroll = if state.follow_tail {
-        max_scroll
-    } else {
-        // offset 和 evicted_lines 都是 u64，直接减。
-        let adjusted = (state.scroll_offset.saturating_sub(state.evicted_lines))
-            .min(u16::MAX as u64) as u16;
-        adjusted.min(max_scroll)
-    };
+    // 绝对行号 → 缓冲区内 u16 偏移的换算，统一走 scroll::viewport_offset,
+    // 全项目只有这一处做这件事。
+    let scroll = crate::scroll::viewport_offset(
+        &crate::scroll::ScrollState {
+            offset: state.scroll_offset,
+            follow_tail: state.follow_tail,
+        },
+        &crate::scroll::ScrollInput {
+            viewport: visible,
+            total_lines: state.buffer_total_lines,
+            evicted_lines: state.evicted_lines,
+        },
+    );
 
     let para = Paragraph::new(all).block(block).wrap(Wrap { trim: false }).scroll((scroll, 0));
     f.render_widget(para, area);
@@ -155,7 +154,6 @@ mod tests {
             menu_title: None,
             scroll_offset: 0,
             follow_tail: true,
-            prev_total_lines: 0,
             unseen_lines: 0,
             evicted_lines: 0,
             buffer_total_lines: total_lines,

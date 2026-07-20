@@ -27,8 +27,6 @@ pub struct RenderState {
     pub menu_title: Option<String>,
     pub scroll_offset: u64,
     pub follow_tail: bool,
-    #[allow(dead_code)]
-    pub prev_total_lines: u32,
     pub unseen_lines: u32,
     pub evicted_lines: u64,
     pub buffer_total_lines: u64,
