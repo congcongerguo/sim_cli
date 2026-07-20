@@ -238,6 +238,22 @@ impl Frontend {
         }
     }
 
+    /// Full input text for the menu item currently highlighted by `menu_idx`,
+    /// including the `"cmd "` head for sub-command completions. Returns `None`
+    /// when no completion menu is open.
+    fn highlighted_menu_text(&self) -> Option<String> {
+        let menu = self.menu_items();
+        if menu.is_empty() {
+            return None;
+        }
+        let idx = self.menu_idx.min(menu.len() - 1);
+        let head = match self.completion_ctx() {
+            CompletionCtx::Sub { cmd_name, .. } => format!("{cmd_name} "),
+            _ => String::new(),
+        };
+        Some(format!("{head}{}", menu[idx].0))
+    }
+
     pub fn menu_title(&self) -> Option<String> {
         match self.completion_ctx() {
             CompletionCtx::Sub { cmd_name, .. } => Some(format!("{cmd_name} <arg>")),
@@ -422,6 +438,8 @@ impl Frontend {
                 KeyCode::Up => {
                     if self.menu_idx > 0 {
                         self.menu_idx -= 1;
+                        // Drop any Tab cycle so the next Tab resumes from here.
+                        self.tab_cycle = None;
                         true
                     } else {
                         false
@@ -430,6 +448,7 @@ impl Frontend {
                 KeyCode::Down => {
                     if self.menu_idx + 1 < menu.len() {
                         self.menu_idx += 1;
+                        self.tab_cycle = None;
                         true
                     } else {
                         false
@@ -482,8 +501,19 @@ impl Frontend {
             && !key.modifiers.contains(KeyModifiers::SHIFT)
             && !key.modifiers.contains(KeyModifiers::ALT)
         {
+            if self.view.streaming {
+                return;
+            }
+            // If the completion menu is open, Enter commits the item currently
+            // highlighted via ↑↓, not just whatever prefix was typed. Without this
+            // an ambiguous input would fall through to handle_tab(), which resets
+            // the selection to the first item and ignores menu_idx.
+            if let Some(sel) = self.highlighted_menu_text() {
+                self.replace_input(&sel);
+                self.tab_cycle = None;
+            }
             let text = self.current_text().trim().to_string();
-            if text.is_empty() || self.view.streaming {
+            if text.is_empty() {
                 return;
             }
             match self.input_state() {
@@ -560,8 +590,11 @@ impl Frontend {
                 cycle.idx = (cycle.idx + 1) % menu.len();
                 cycle.idx
             } else {
-                self.tab_cycle = Some(TabCycle { idx: 0 });
-                0
+                // Begin cycling from the item currently highlighted by ↑↓ rather
+                // than always from the first, so Tab agrees with arrow selection.
+                let start = self.menu_idx.min(menu.len() - 1);
+                self.tab_cycle = Some(TabCycle { idx: start });
+                start
             };
             self.menu_idx = new_idx;
             let text = format!("{head}{}", menu[new_idx].0);
@@ -631,3 +664,86 @@ impl Frontend {
 }
 
 // (removed unused build_sub_head)
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tool::{Cmd, Sub};
+    use std::sync::Arc;
+
+    const SUBS: &[Sub] = &[
+        Sub { name: "alpha", desc: "" },
+        Sub { name: "beta", desc: "" },
+        Sub { name: "gamma", desc: "" },
+    ];
+    const CMDS: &[Cmd] = &[Cmd { name: "con", desc: "", subs: SUBS }];
+
+    fn frontend_with_cmds() -> (Frontend, mpsc::Receiver<Command>) {
+        let (cmd_tx, cmd_rx) = mpsc::channel(16);
+        let (_view_tx, view_rx) = watch::channel(ViewState::initial());
+        let mut fe = Frontend::new(cmd_tx, view_rx);
+        fe.view.active_cmds = Arc::new(CMDS.to_vec());
+        (fe, cmd_rx)
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn recv_input(rx: &mut mpsc::Receiver<Command>) -> String {
+        match rx.try_recv() {
+            Ok(Command::Input(text)) => text,
+            other => panic!("expected Command::Input, got {other:?}"),
+        }
+    }
+
+    /// ↓ to the second sub-command then Enter must run that second item,
+    /// not fall back to the first one.
+    #[test]
+    fn enter_runs_arrow_selected_sub() {
+        let (mut fe, mut cmd_rx) = frontend_with_cmds();
+        fe.replace_input("con ");
+
+        fe.on_key(key(KeyCode::Down)); // highlight "beta"
+        assert_eq!(fe.menu_idx, 1);
+
+        fe.on_key(key(KeyCode::Enter));
+        assert_eq!(recv_input(&mut cmd_rx), "con beta");
+    }
+
+    /// Two ↓ presses land on the third item; Enter runs it.
+    #[test]
+    fn enter_runs_third_sub() {
+        let (mut fe, mut cmd_rx) = frontend_with_cmds();
+        fe.replace_input("con ");
+
+        fe.on_key(key(KeyCode::Down));
+        fe.on_key(key(KeyCode::Down));
+        assert_eq!(fe.menu_idx, 2);
+
+        fe.on_key(key(KeyCode::Enter));
+        assert_eq!(recv_input(&mut cmd_rx), "con gamma");
+    }
+
+    /// Without touching the arrows, Enter still picks the first item.
+    #[test]
+    fn enter_default_runs_first_sub() {
+        let (mut fe, mut cmd_rx) = frontend_with_cmds();
+        fe.replace_input("con ");
+
+        fe.on_key(key(KeyCode::Enter));
+        assert_eq!(recv_input(&mut cmd_rx), "con alpha");
+    }
+
+    /// Tab resumes cycling from the arrow-highlighted item.
+    #[test]
+    fn tab_starts_from_arrow_selection() {
+        let (mut fe, _cmd_rx) = frontend_with_cmds();
+        fe.replace_input("con ");
+
+        fe.on_key(key(KeyCode::Down)); // highlight "beta" (idx 1)
+        fe.on_key(key(KeyCode::Tab)); // should fill "con beta"
+        assert_eq!(fe.current_text(), "con beta");
+        assert_eq!(fe.menu_idx, 1);
+    }
+}
