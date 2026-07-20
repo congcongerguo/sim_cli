@@ -1,16 +1,16 @@
 //! 消息环形缓冲区。满时淘汰最旧条目。
 //!
-//! # 计数器（全部增量维护，每次 push O(1)）
+//! # 唯一的可信来源
 //!
-//! | 字段 | 含义 | 用途 |
-//! |---|---|---|
-//! | `total_lines` | 当前渲染行数 | `buffer_total_lines` → 翻滚计算 |
-//! | `evicted_lines` | 累计淘汰的渲染行数 | 翻滚坐标修正 |
-//! | `total_evicted` | 累计淘汰的消息条数 | 仅诊断 |
+//! 缓冲区只存两类量:
 //!
-//! `msg_line_count()` 在 push 时和淘汰时各调一次。只要消息不被原地修改，
-//! 计数就保持准确。（生产环境只使用 System 消息；Tool/Assistant 在
-//! `mock-llm` feature 后面，默认关闭。）
+//! - **当前内容**:`messages`（`VecDeque`）。当前渲染行数
+//!   [`total_lines`](LogBuffer::total_lines) 直接由它按需求和得到，
+//!   不额外缓存——即使消息被原地修改（如 Tool 补上 output），
+//!   下一次读取也总是准确。缓冲区上限只有百来条，求和是纳秒级。
+//! - **淘汰历史**:`evicted_lines` / `total_evicted`。被淘汰的消息已经
+//!   不在缓冲区里，无法反推，所以必须在淘汰/清空的那一刻累加记下。
+//!   它们只增不减，也不受原地修改影响。
 //!
 //! # 翻滚坐标修正
 //!
@@ -55,16 +55,15 @@ pub fn msg_line_count(msg: &Message) -> u64 {
 pub struct LogBuffer {
     messages: VecDeque<TimedMessage>,
     max_entries: usize,
-    total_evicted: u64,      // count of messages evicted
-    total_lines: u64,        // current render line count
-    evicted_lines: u64,      // line count of evicted messages (for scroll correction)
+    total_evicted: u64,      // cumulative evicted message count (history)
+    evicted_lines: u64,      // cumulative evicted render lines (history, for scroll)
 }
 
 impl LogBuffer {
     pub fn new(max_entries: usize) -> Self {
         Self {
             messages: VecDeque::new(), max_entries,
-            total_evicted: 0, total_lines: 0, evicted_lines: 0,
+            total_evicted: 0, evicted_lines: 0,
         }
     }
 
@@ -77,14 +76,10 @@ impl LogBuffer {
     /// Add a message with an explicit timestamp. Lets the caller share one
     /// timestamp between the on-screen entry and the message log file.
     pub fn push_at(&mut self, time: Timestamp, msg: Message) {
-        let added = msg_line_count(&msg);
         self.messages.push_back(TimedMessage { time, msg });
-        self.total_lines += added;
         while self.messages.len() > self.max_entries {
             if let Some(old) = self.messages.pop_front() {
-                let old_lines = msg_line_count(&old.msg);
-                self.total_lines -= old_lines;
-                self.evicted_lines += old_lines;
+                self.evicted_lines += msg_line_count(&old.msg);
                 self.total_evicted += 1;
             }
         }
@@ -103,8 +98,7 @@ impl LogBuffer {
     /// Clear all messages. Adds current lines to eviction count so the
     /// absolute scroll coordinate remains valid.
     pub fn clear(&mut self) {
-        self.evicted_lines += self.total_lines;
-        self.total_lines = 0;
+        self.evicted_lines += self.total_lines();
         self.messages.clear();
     }
 
@@ -119,9 +113,12 @@ impl LogBuffer {
         self.evicted_lines
     }
 
-    /// Total render lines (maintained incrementally — O(1)).
+    /// Total render lines of the messages currently held. Summed on demand
+    /// from the single source of truth, so it always reflects the latest
+    /// content even after in-place edits (buffer is capped at `max_entries`,
+    /// so this is O(entries) over a small, bounded deque).
     pub fn total_lines(&self) -> u64 {
-        self.total_lines
+        self.messages.iter().map(|e| msg_line_count(&e.msg)).sum()
     }
 
     /// Iterate messages from oldest to newest.
@@ -345,6 +342,26 @@ mod tests {
         buf.push(msg("triggers eviction")); // evicts first msg
         assert_eq!(buf.evicted_lines(), 1, "evicted_lines must count lines, not entries");
         assert_eq!(buf.evicted_entries(), 1, "evicted_entries must count entries");
+    }
+
+    #[test]
+    fn total_lines_reflects_in_place_edits() {
+        use crate::message::{ToolCall, ToolStatus};
+        let mut buf = LogBuffer::new(10);
+        buf.push(Message::Tool(ToolCall {
+            name: "ls".into(), args_preview: String::new(),
+            status: ToolStatus::Running, output: String::new(),
+        }));
+        // Empty tool card = 2 lines (title + closing border).
+        assert_eq!(buf.total_lines(), 2);
+
+        // Fill in the output in place (as modal::finish_tool does).
+        if let Some(Message::Tool(t)) = buf.last_mut() {
+            t.status = ToolStatus::Done;
+            t.output = "a\nb\nc".into();
+        }
+        // 1 title + 0 args + (1 sep + 3 output) + 1 closing = 6.
+        assert_eq!(buf.total_lines(), 6, "total_lines must track in-place edits");
     }
 
     #[test]
