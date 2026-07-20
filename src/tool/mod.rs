@@ -165,20 +165,26 @@ pub fn spawn(name: String, tool: impl Tool, cmds: Arc<Vec<Cmd>>) -> ToolHandle {
 
                         let msgs = match cmd {
                             "help" => build_help(&cmds),
-                            "clear" => { ctx.log.clear(); ctx.log.push(msg("conversation cleared", LogLevel::Notice)); continue; }
+                            "clear" => {
+                                ctx.log.clear();
+                                let m = msg("conversation cleared", LogLevel::Notice);
+                                crate::msg_log::record(&ctx.name, &m);
+                                ctx.log.push(m);
+                                continue;
+                            }
                             _ => ctx.tool.handle(cmd, args),
                         };
-                        for m in msgs { ctx.log.push(m); }
+                        for m in msgs { crate::msg_log::record(&ctx.name, &m); ctx.log.push(m); }
                     }
                     None => break,
                 },
                 maybe_ev = transport_rx.recv() => {
                     if let Some(ev) = maybe_ev {
-                        for m in ctx.tool.on_transport(ev) { ctx.log.push(m); }
+                        for m in ctx.tool.on_transport(ev) { crate::msg_log::record(&ctx.name, &m); ctx.log.push(m); }
                     }
                 }
                 _ = tick.tick() => {
-                    for m in ctx.tool.tick() { ctx.log.push(m); }
+                    for m in ctx.tool.tick() { crate::msg_log::record(&ctx.name, &m); ctx.log.push(m); }
                 }
                 _ = push.tick() => {
                     let _ = view_tx.send(ViewUpdate {
