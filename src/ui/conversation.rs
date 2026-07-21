@@ -9,10 +9,11 @@ use crate::ui::render_state::RenderState;
 use crate::ui::tool_card::tool_card_lines;
 
 pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState, visible: u16) -> u16 {
-    let mut all: Vec<Line<'static>> = Vec::new();
+    // Each render line is tagged with the timestamp of the message it came
+    // from, so every line can be prefixed with its own `[HH:MM:SS.mmm]`.
+    let mut all: Vec<(Timestamp, Line<'static>)> = Vec::new();
 
     for tm in state.messages.iter() {
-        // Lines produced by this one message, before timestamp decoration.
         let mut lines: Vec<Line<'static>> = Vec::new();
         match &tm.msg {
             Message::Assistant { text, streaming } => {
@@ -44,13 +45,26 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState, visible: u
                 }
             }
         }
-        prepend_timestamp(&mut lines, tm.time);
-        all.extend(lines);
+        all.extend(lines.into_iter().map(|l| (tm.time, l)));
     }
 
-    while all.last().map(|l| l.spans.is_empty()).unwrap_or(false) {
+    // Trim trailing blank lines based on their original (pre-timestamp) content.
+    while all.last().map(|(_, l)| l.spans.is_empty()).unwrap_or(false) {
         all.pop();
     }
+
+    // Prefix every line with its own `[HH:MM:SS.mmm] ` (millisecond precision).
+    let all: Vec<Line<'static>> = all
+        .into_iter()
+        .map(|(time, mut line)| {
+            let ts = time.format("[%H:%M:%S%.3f] ").to_string();
+            let mut spans = Vec::with_capacity(line.spans.len() + 1);
+            spans.push(Span::styled(ts, Style::default().fg(Color::DarkGray)));
+            spans.append(&mut line.spans);
+            line.spans = spans;
+            line
+        })
+        .collect();
 
     // total_lines 来自 LogBuffer（消息渲染行数），不是 all.len()
     let total_lines = state.buffer_total_lines as u16;
@@ -86,30 +100,6 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState, visible: u
     }
 
     total_lines
-}
-
-/// Prefix a message's first render line with a millisecond-precision
-/// time-of-day (`HH:MM:SS.mmm`); align continuation lines under the text.
-/// Adds no new lines, so `msg_line_count`/scroll math stay correct.
-fn prepend_timestamp(lines: &mut [Line<'static>], time: Timestamp) {
-    if lines.is_empty() {
-        return;
-    }
-    let ts = time.format("%H:%M:%S%.3f").to_string(); // 12 chars, e.g. 14:23:01.123
-    let indent = " ".repeat(ts.chars().count() + 1);
-    for (i, line) in lines.iter_mut().enumerate() {
-        if i == 0 {
-            let mut spans = Vec::with_capacity(line.spans.len() + 1);
-            spans.push(Span::styled(format!("{ts} "), Style::default().fg(Color::DarkGray)));
-            spans.append(&mut line.spans);
-            line.spans = spans;
-        } else if !line.spans.is_empty() {
-            let mut spans = Vec::with_capacity(line.spans.len() + 1);
-            spans.push(Span::raw(indent.clone()));
-            spans.append(&mut line.spans);
-            line.spans = spans;
-        }
-    }
 }
 
 fn log_level_color(level: LogLevel) -> Color {
@@ -187,20 +177,18 @@ mod tests {
         let msg = Message::System { text: "hello".into(), level: LogLevel::Info };
         let state = state_with(vec![TimedMessage { time: fixed_time(), msg }], 1);
         let text = buffer_text(&state);
-        assert!(text.contains("14:23:01.123"), "timestamp missing:\n{text}");
-        assert!(text.contains("14:23:01.123 hello"), "timestamp should sit before text:\n{text}");
+        assert!(text.contains("[14:23:01.123]"), "timestamp missing:\n{text}");
+        assert!(text.contains("[14:23:01.123] hello"), "timestamp should sit before text:\n{text}");
     }
 
     #[test]
-    fn continuation_lines_are_indented_not_prefixed() {
+    fn every_line_gets_its_own_timestamp() {
         let msg = Message::System { text: "one\ntwo".into(), level: LogLevel::Info };
         let state = state_with(vec![TimedMessage { time: fixed_time(), msg }], 2);
         let text = buffer_text(&state);
         let lines: Vec<&str> = text.lines().collect();
-        // First line carries the timestamp, the second is indented under the text.
-        assert!(lines[0].contains("14:23:01.123 one"));
-        assert!(!lines[1].contains("14:23:01.123"), "only the first line gets a stamp");
-        assert!(lines[1].trim_start().starts_with("two"));
-        assert!(lines[1].starts_with(' '), "continuation line should be indented");
+        // Both lines carry the timestamp — not just the first.
+        assert!(lines[0].contains("[14:23:01.123] one"));
+        assert!(lines[1].contains("[14:23:01.123] two"), "continuation line must be stamped too");
     }
 }
