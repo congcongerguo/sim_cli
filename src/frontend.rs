@@ -104,8 +104,20 @@ impl Frontend {
 
     pub async fn run<B: Backend>(&mut self, term: &mut Terminal<B>) -> Result<()> {
         let mut events = EventStream::new();
+        // Windows ConPTY can drop the first frame drawn right after entering the
+        // alternate screen. ratatui only repaints cells that changed since the
+        // previous frame, so a static region like the tab bar would then stay
+        // blank until something forced a repaint (switching tabs with ←/→, or a
+        // resize). Reset the diff baseline for the first couple of frames so
+        // they fully repaint once the screen is initialized. `clear()` is
+        // immediately followed by `draw()`, so there is no blank gap.
+        let mut warmup_repaints = 2u8;
         loop {
             let state = self.build_render_state();
+            if warmup_repaints > 0 {
+                term.clear()?;
+                warmup_repaints -= 1;
+            }
             // Seed values are overwritten by the draw closure below; only the
             // viewport matters if the closure somehow doesn't run.
             let mut render_out = crate::ui::render_state::RenderOutput {
