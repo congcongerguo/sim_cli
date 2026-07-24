@@ -33,6 +33,10 @@ pub struct RenderState {
     pub panel_visible: bool,
     pub modal_request: Option<ModalRequest>,
     pub modal_selected: usize,
+    /// Active display filter expression (for the status line), if any.
+    pub filter: Option<String>,
+    /// Message from the last rejected filter expression, if any.
+    pub filter_error: Option<String>,
 }
 
 /// Values the renderer computes and returns to the frontend.
