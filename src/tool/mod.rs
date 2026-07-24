@@ -209,12 +209,12 @@ fn build_cmds(mut own: Vec<Cmd>) -> Vec<Cmd> {
 fn build_help(cmds: &[Cmd]) -> Vec<Message> {
     let mut s = String::from("commands:\n");
     for c in cmds {
-        s.push_str(&format!("  {:<8} — {}\n", c.name, c.desc));
+        s.push_str(&format!("  {:<8} - {}\n", c.name, c.desc));
         for sub in c.subs {
             s.push_str(&format!("      {:<6} {}\n", sub.name, sub.desc));
         }
     }
-    s.push_str("\n←/→ switch tab  ^C exit");
+    s.push_str("\n<-/-> switch tab  ^C exit");
     vec![Message::System { text: s, level: LogLevel::Info }]
 }
 

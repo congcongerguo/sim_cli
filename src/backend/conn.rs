@@ -182,15 +182,15 @@ pub fn format(outcome: &ConnOutcome) -> (String, LogLevel) {
         ConnOutcome::Disconnected => ("disconnected".into(), Notice),
         ConnOutcome::PeerClosed => ("peer closed connection".into(), Warn),
         ConnOutcome::NotConnected => {
-            ("not connected — run 'con <protocol>' first".into(), Warn)
+            ("not connected - run 'con <protocol>' first".into(), Warn)
         }
-        ConnOutcome::Sent { line } => (format!("→ send: {line}"), Info),
+        ConnOutcome::Sent { line } => (format!("-> send: {line}"), Info),
         ConnOutcome::SendFailed(e) => (format!("send failed: {e}"), Error),
         ConnOutcome::RecvJson { n, bytes, encoding } => {
-            (format!("← recv #{n} ({encoding}, {bytes} bytes)"), Info)
+            (format!("<- recv #{n} ({encoding}, {bytes} bytes)"), Info)
         }
         ConnOutcome::RecvInvalid { raw, error } => {
-            (format!("← recv (invalid JSON: {error})\nraw: {raw}"), Warn)
+            (format!("<- recv (invalid JSON: {error})\nraw: {raw}"), Warn)
         }
         ConnOutcome::Error(e) => (format!("transport error: {e}"), Error),
     }

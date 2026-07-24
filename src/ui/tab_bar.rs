@@ -18,9 +18,9 @@ pub fn render(f: &mut Frame, area: Rect, tools: &[ToolInfo], active: usize) {
         };
 
         let (dot, dot_color) = if t.active {
-            ("●", Color::Green)
+            ("*", Color::Green)
         } else {
-            ("·", Color::DarkGray)
+            (" ", Color::DarkGray)
         };
         spans.push(Span::styled(
             format!(" {dot} "),
