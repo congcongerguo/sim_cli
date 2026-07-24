@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -57,11 +58,12 @@ pub struct Frontend {
     view_rx: watch::Receiver<ViewState>,
     history: Vec<String>,
     history_cursor: Option<usize>,
-    /// Display-only log filter. Filters what the conversation shows; the log
-    /// buffer and the message-log file are untouched.
-    filter: Option<crate::filter::Filter>,
-    /// Error from the last rejected `filter` expression (shown in status line).
-    filter_error: Option<String>,
+    /// Display-only log filters, keyed by tool (tab) name — each tab keeps its
+    /// own filter. Filters what the conversation shows; the log buffer and the
+    /// message-log file are untouched.
+    filters: HashMap<String, crate::filter::Filter>,
+    /// Error from the last rejected `filter` expression, per tab.
+    filter_errors: HashMap<String, String>,
 }
 
 impl Frontend {
@@ -83,9 +85,14 @@ impl Frontend {
             view_rx,
             history: Vec::new(),
             history_cursor: None,
-            filter: None,
-            filter_error: None,
+            filters: HashMap::new(),
+            filter_errors: HashMap::new(),
         }
+    }
+
+    /// Name of the currently active tool (tab), used to key per-tab state.
+    fn current_tool(&self) -> Option<String> {
+        self.view.tools.get(self.view.active_index).map(|t| t.name.clone())
     }
 
     /// The messages to show plus the scroll geometry for them, after applying
@@ -93,7 +100,8 @@ impl Frontend {
     /// matching messages form a self-contained view (no evicted prefix), so the
     /// existing scroll machinery works unchanged on the filtered set.
     fn effective_view(&self) -> (Arc<Vec<crate::message::TimedMessage>>, u64, u64) {
-        match &self.filter {
+        let active = self.current_tool().and_then(|name| self.filters.get(&name));
+        match active {
             None => (
                 self.view.messages.clone(),
                 self.view.buffer_total_lines,
@@ -117,30 +125,36 @@ impl Frontend {
     }
 
     /// Handle the display-only `filter` / `unfilter` commands locally (never
-    /// sent to the tool). Returns `true` if `text` was such a command.
+    /// sent to the tool). Applies to the active tab only. Returns `true` if
+    /// `text` was such a command.
     fn try_filter_command(&mut self, text: &str) -> bool {
         let trimmed = text.trim();
         let (cmd, rest) = match trimmed.split_once(char::is_whitespace) {
             Some((c, r)) => (c, r.trim()),
             None => (trimmed, ""),
         };
+        // Filters are per-tab; without an active tab there's nothing to key on.
+        let tool = match self.current_tool() {
+            Some(t) => t,
+            None => return matches!(cmd, "filter" | "unfilter"),
+        };
         match cmd {
             "filter" if rest.is_empty() => {
-                self.filter = None;
-                self.filter_error = None;
+                self.filters.remove(&tool);
+                self.filter_errors.remove(&tool);
             }
             "unfilter" => {
-                self.filter = None;
-                self.filter_error = None;
+                self.filters.remove(&tool);
+                self.filter_errors.remove(&tool);
             }
             "filter" => match crate::filter::Filter::parse(rest) {
                 Ok(f) => {
-                    self.filter = Some(f);
-                    self.filter_error = None;
+                    self.filters.insert(tool.clone(), f);
+                    self.filter_errors.remove(&tool);
                 }
                 Err(e) => {
                     // Keep the previous filter; just report the error.
-                    self.filter_error = Some(e);
+                    self.filter_errors.insert(tool, e);
                     return true;
                 }
             },
@@ -175,8 +189,10 @@ impl Frontend {
             panel_visible: self.panel_visible,
             modal_request: self.view.modal.clone(),
             modal_selected: self.modal_selected,
-            filter: self.filter.as_ref().map(|f| f.src().to_string()),
-            filter_error: self.filter_error.clone(),
+            filter: self.current_tool()
+                .and_then(|t| self.filters.get(&t))
+                .map(|f| f.src().to_string()),
+            filter_error: self.current_tool().and_then(|t| self.filter_errors.get(&t).cloned()),
         }
     }
 
@@ -820,7 +836,7 @@ mod tests {
         // A bad expression is still "handled" but records an error and keeps
         // the (now cleared) filter unchanged.
         assert!(fe.try_filter_command("filter /("));
-        assert!(fe.filter_error.is_some());
+        assert!(!fe.filter_errors.is_empty());
         assert_eq!(fe.effective_view().0.len(), 3);
 
         // Non-filter input is not consumed here.
@@ -828,6 +844,34 @@ mod tests {
 
         // The filter path never emits a tool command.
         assert!(cmd_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn filters_are_per_tab() {
+        let (mut fe, _rx) = frontend_with_cmds();
+        // Initial view has at least two tabs (conn, demo); active is index 0.
+        assert!(fe.view.tools.len() >= 2, "need two tabs for this test");
+
+        // Filter the first tab.
+        fe.view.messages = Arc::new(vec![sys("error x"), sys("ok y")]);
+        fe.view.buffer_total_lines = 2;
+        assert!(fe.try_filter_command("filter /error/"));
+        assert_eq!(fe.effective_view().0.len(), 1, "tab 0 is filtered");
+
+        // Switch to the second tab: it has no filter of its own.
+        fe.view.active_index = 1;
+        fe.view.messages = Arc::new(vec![sys("error a"), sys("ok b"), sys("ok c")]);
+        fe.view.buffer_total_lines = 3;
+        assert_eq!(fe.effective_view().0.len(), 3, "tab 1 is unfiltered");
+
+        // The status line reflects the active tab's filter (none here).
+        assert!(fe.build_render_state().filter.is_none());
+
+        // Back to tab 0: its filter is still in effect.
+        fe.view.active_index = 0;
+        fe.view.messages = Arc::new(vec![sys("error x"), sys("ok y")]);
+        assert_eq!(fe.effective_view().0.len(), 1, "tab 0 filter persisted");
+        assert_eq!(fe.build_render_state().filter.as_deref(), Some("/error/"));
     }
 
     /// ↓ to the second sub-command then Enter must run that second item,
