@@ -150,6 +150,8 @@ mod tests {
             panel_visible: true,
             modal_request: None,
             modal_selected: 0,
+            filter: None,
+            filter_error: None,
         }
     }
 

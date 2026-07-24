@@ -21,6 +21,9 @@ futures = "0.3"
 anyhow = "1"
 unicode-width = "0.2"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+# Lightweight regex engine (much smaller binary than the full `regex` crate) —
+# used only for the display-only log filter.
+regex-lite = "0.1"
 zeromq = { version = "0.6", default-features = false, features = ["tokio-runtime", "tcp-transport"], optional = true }
 prost = { version = "0.13", optional = true }
 

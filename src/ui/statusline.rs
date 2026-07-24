@@ -34,9 +34,28 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState) {
         Color::DarkGray
     }));
 
+    // Active display filter (or the error from a rejected expression).
+    let filter_span = if let Some(ref err) = state.filter_error {
+        Some(Span::styled(
+            format!(" filter error: {err} "),
+            Style::default().bg(Color::Red).fg(Color::Black),
+        ))
+    } else {
+        state.filter.as_ref().map(|f| {
+            Span::styled(
+                format!(" filter: {f} "),
+                Style::default().bg(Color::Cyan).fg(Color::Black),
+            )
+        })
+    };
+
     let hint = Span::styled(" ⏎ send  /  cmd  ^C exit  ←→ switch tab ", Style::default().fg(Color::DarkGray));
 
-    let left_line = Line::from(vec![left, middle]);
+    let mut left_spans = vec![left, middle];
+    if let Some(fs) = filter_span {
+        left_spans.push(fs);
+    }
+    let left_line = Line::from(left_spans);
     let right_line = Line::from(hint);
 
     f.render_widget(Paragraph::new(left_line), area);

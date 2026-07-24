@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use crossterm::event::{
     Event as CtEvent, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
@@ -47,6 +49,11 @@ pub struct Frontend {
     view_rx: watch::Receiver<ViewState>,
     history: Vec<String>,
     history_cursor: Option<usize>,
+    /// Display-only log filter. Filters what the conversation shows; the log
+    /// buffer and the message-log file are untouched.
+    filter: Option<crate::filter::Filter>,
+    /// Error from the last rejected `filter` expression (shown in status line).
+    filter_error: Option<String>,
 }
 
 impl Frontend {
@@ -68,14 +75,80 @@ impl Frontend {
             view_rx,
             history: Vec::new(),
             history_cursor: None,
+            filter: None,
+            filter_error: None,
         }
+    }
+
+    /// The messages to show plus the scroll geometry for them, after applying
+    /// the display filter. Without a filter this is the raw view; with one, the
+    /// matching messages form a self-contained view (no evicted prefix), so the
+    /// existing scroll machinery works unchanged on the filtered set.
+    fn effective_view(&self) -> (Arc<Vec<crate::message::TimedMessage>>, u64, u64) {
+        match &self.filter {
+            None => (
+                self.view.messages.clone(),
+                self.view.buffer_total_lines,
+                self.view.evicted_lines,
+            ),
+            Some(f) => {
+                let filtered: Vec<crate::message::TimedMessage> = self
+                    .view
+                    .messages
+                    .iter()
+                    .filter(|tm| f.matches_msg(&tm.msg))
+                    .cloned()
+                    .collect();
+                let total: u64 = filtered
+                    .iter()
+                    .map(|tm| crate::log_buffer::msg_line_count(&tm.msg))
+                    .sum();
+                (Arc::new(filtered), total, 0)
+            }
+        }
+    }
+
+    /// Handle the display-only `filter` / `unfilter` commands locally (never
+    /// sent to the tool). Returns `true` if `text` was such a command.
+    fn try_filter_command(&mut self, text: &str) -> bool {
+        let trimmed = text.trim();
+        let (cmd, rest) = match trimmed.split_once(char::is_whitespace) {
+            Some((c, r)) => (c, r.trim()),
+            None => (trimmed, ""),
+        };
+        match cmd {
+            "filter" if rest.is_empty() => {
+                self.filter = None;
+                self.filter_error = None;
+            }
+            "unfilter" => {
+                self.filter = None;
+                self.filter_error = None;
+            }
+            "filter" => match crate::filter::Filter::parse(rest) {
+                Ok(f) => {
+                    self.filter = Some(f);
+                    self.filter_error = None;
+                }
+                Err(e) => {
+                    // Keep the previous filter; just report the error.
+                    self.filter_error = Some(e);
+                    return true;
+                }
+            },
+            _ => return false,
+        }
+        // A filter change re-bases the scroll coordinate; jump to the tail.
+        self.scrollback = crate::scroll::Scrollback::default();
+        true
     }
 
     pub fn build_render_state(&self) -> crate::ui::render_state::RenderState {
         use crate::ui::render_state::RenderState;
         let menu = self.menu_items();
+        let (messages, buffer_total_lines, evicted_lines) = self.effective_view();
         RenderState {
-            messages: self.view.messages.clone(),
+            messages,
             streaming: self.view.streaming,
             state: self.view.state.clone(),
             tools: self.view.tools.clone(),
@@ -89,11 +162,13 @@ impl Frontend {
             scroll_offset: self.scrollback.offset(),
             follow_tail: self.scrollback.follow_tail(),
             unseen_lines: self.scrollback.unseen(),
-            evicted_lines: self.view.evicted_lines,
-            buffer_total_lines: self.view.buffer_total_lines,
+            evicted_lines,
+            buffer_total_lines,
             panel_visible: self.panel_visible,
             modal_request: self.view.modal.clone(),
             modal_selected: self.modal_selected,
+            filter: self.filter.as_ref().map(|f| f.src().to_string()),
+            filter_error: self.filter_error.clone(),
         }
     }
 
@@ -328,15 +403,18 @@ impl Frontend {
                 return;
             }
             (KeyCode::PageUp, _) | (KeyCode::Char('b'), KeyModifiers::CONTROL) => {
-                self.scrollback.page_up(self.view.buffer_total_lines, self.view.evicted_lines);
+                let (_, total, evicted) = self.effective_view();
+                self.scrollback.page_up(total, evicted);
                 return;
             }
             (KeyCode::PageDown, _) | (KeyCode::Char('f'), KeyModifiers::CONTROL) => {
-                self.scrollback.page_down(self.view.buffer_total_lines, self.view.evicted_lines);
+                let (_, total, evicted) = self.effective_view();
+                self.scrollback.page_down(total, evicted);
                 return;
             }
             (KeyCode::Home, _) => {
-                self.scrollback.home(self.view.buffer_total_lines, self.view.evicted_lines);
+                let (_, total, evicted) = self.effective_view();
+                self.scrollback.home(total, evicted);
                 return;
             }
             (KeyCode::End, _) => {
@@ -595,6 +673,14 @@ impl Frontend {
         self.menu_idx = 0;
         self.history_cursor = None;
 
+        // Display-only filter commands are handled locally, never sent to the
+        // tool. Still recorded in history for convenience.
+        if self.try_filter_command(&text) {
+            self.push_history(text);
+            self.replace_input("");
+            return;
+        }
+
         // Ambiguous → auto-complete instead of submitting
         if matches!(self.input_state(), InputState::Ambiguous) {
             self.handle_tab();
@@ -604,15 +690,18 @@ impl Frontend {
         // Expand partial sub-command prefix before sending
         let text = self.expand_text(text);
 
+        self.push_history(text.clone());
+        self.replace_input("");
+        self.send(Command::Input(text));
+    }
+
+    fn push_history(&mut self, text: String) {
         if self.history.last().map_or(true, |last| last != &text) {
-            self.history.push(text.clone());
+            self.history.push(text);
             if self.history.len() > 1000 {
                 self.history.remove(0);
             }
         }
-
-        self.replace_input("");
-        self.send(Command::Input(text));
     }
 
     fn run_hotkey(&mut self, text: &str) {
@@ -629,7 +718,6 @@ impl Frontend {
 mod tests {
     use super::*;
     use crate::tool::{Cmd, Sub};
-    use std::sync::Arc;
 
     const SUBS: &[Sub] = &[
         Sub { name: "alpha", desc: "" },
@@ -655,6 +743,58 @@ mod tests {
             Ok(Command::Input(text)) => text,
             other => panic!("expected Command::Input, got {other:?}"),
         }
+    }
+
+    fn sys(text: &str) -> crate::message::TimedMessage {
+        crate::message::TimedMessage {
+            time: chrono::Local::now(),
+            msg: crate::message::Message::System {
+                text: text.into(),
+                level: crate::message::LogLevel::Info,
+            },
+        }
+    }
+
+    #[test]
+    fn filter_command_hides_non_matching_messages() {
+        let (mut fe, mut cmd_rx) = frontend_with_cmds();
+        fe.view.messages = Arc::new(vec![
+            sys("error: disk full"),
+            sys("info: all good"),
+            sys("error: timeout"),
+        ]);
+        fe.view.buffer_total_lines = 3;
+        fe.view.evicted_lines = 0;
+
+        // No filter → all three, raw geometry preserved.
+        assert_eq!(fe.effective_view().0.len(), 3);
+
+        // Regex filter → display-only, nothing sent to the tool.
+        assert!(fe.try_filter_command("filter /error/"));
+        let (msgs, total, evicted) = fe.effective_view();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(total, 2);
+        assert_eq!(evicted, 0);
+
+        // Boolean AND narrows further.
+        assert!(fe.try_filter_command("filter /error/ && /timeout/"));
+        assert_eq!(fe.effective_view().0.len(), 1);
+
+        // Clearing restores everything.
+        assert!(fe.try_filter_command("filter"));
+        assert_eq!(fe.effective_view().0.len(), 3);
+
+        // A bad expression is still "handled" but records an error and keeps
+        // the (now cleared) filter unchanged.
+        assert!(fe.try_filter_command("filter /("));
+        assert!(fe.filter_error.is_some());
+        assert_eq!(fe.effective_view().0.len(), 3);
+
+        // Non-filter input is not consumed here.
+        assert!(!fe.try_filter_command("start"));
+
+        // The filter path never emits a tool command.
+        assert!(cmd_rx.try_recv().is_err());
     }
 
     /// ↓ to the second sub-command then Enter must run that second item,
