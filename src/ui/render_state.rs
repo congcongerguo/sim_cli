@@ -33,12 +33,16 @@ pub struct RenderState {
     pub panel_visible: bool,
     pub modal_request: Option<ModalRequest>,
     pub modal_selected: usize,
-    /// Active display filter expression (for the status line), if any.
+    /// Active include-filter expression (show only matches), if any.
     pub filter: Option<String>,
-    /// Message from the last rejected filter expression, if any.
+    /// Message from the last rejected `filter` expression, if any.
     pub filter_error: Option<String>,
-    /// (shown, total) message counts when a filter is active — lets the status
-    /// line show how many messages the filter is currently matching.
+    /// Active exclude-filter expression (hide matches), if any.
+    pub exclude: Option<String>,
+    /// Message from the last rejected `exclude` expression, if any.
+    pub exclude_error: Option<String>,
+    /// (shown, total) message counts when any view filter is active — lets the
+    /// status line show how many messages are currently visible.
     pub filter_counts: Option<(usize, usize)>,
 }
 
