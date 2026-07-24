@@ -45,8 +45,8 @@ impl ViewState {
             .collect();
         let first = TOOL_DEFS.first();
         let msg = match first {
-            Some(d) => format!("[{}] {} — type 'help' for commands", d.name, d.hint),
-            None => "no tools configured — check tasks.toml and features".to_string(),
+            Some(d) => format!("[{}] {} - type 'help' for commands", d.name, d.hint),
+            None => "no tools configured - check tasks.toml and features".to_string(),
         };
         Self {
             messages: Arc::new(vec![

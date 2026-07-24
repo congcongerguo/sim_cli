@@ -13,6 +13,14 @@ use tui_textarea::{Input, Key, TextArea};
 use crate::backend::{Command, ModalChoice, Mode, ViewState};
 const PLACEHOLDER: &str = "command (Tab to complete, Enter to run)";
 
+/// Frontend-only commands (handled locally, never sent to a tool). Listed in
+/// the completion menu next to the active tool's commands so they're
+/// discoverable via Tab.
+const FRONTEND_CMDS: &[(&str, &str)] = &[
+    ("filter", "show only matching lines (regex; && || ! ; e.g. filter /error/)"),
+    ("unfilter", "clear the display filter"),
+];
+
 #[derive(Debug, Default)]
 pub struct TabCycle {
     pub idx: usize,
@@ -282,10 +290,16 @@ impl Frontend {
     pub fn menu_items(&self) -> Vec<(String, String)> {
         match self.completion_ctx() {
             CompletionCtx::Command { prefix } => {
-                self.view.active_cmds.iter()
+                let mut items: Vec<(String, String)> = self.view.active_cmds.iter()
                     .filter(|c| c.name.starts_with(&prefix))
                     .map(|c| (c.name.to_string(), c.desc.to_string()))
-                    .collect()
+                    .collect();
+                items.extend(
+                    FRONTEND_CMDS.iter()
+                        .filter(|(name, _)| name.starts_with(&prefix))
+                        .map(|(name, desc)| (name.to_string(), desc.to_string())),
+                );
+                items
             }
             CompletionCtx::Sub { cmd_name, prefix } => {
                 for c in self.view.active_cmds.iter() {
@@ -335,10 +349,13 @@ impl Frontend {
         }
         match self.completion_ctx() {
             CompletionCtx::Command { prefix } => {
-                let matches: Vec<_> = self.view.active_cmds.iter()
+                let count = self.view.active_cmds.iter()
                     .filter(|c| c.name.starts_with(&prefix))
-                    .collect();
-                match matches.len() {
+                    .count()
+                    + FRONTEND_CMDS.iter()
+                        .filter(|(name, _)| name.starts_with(&prefix))
+                        .count();
+                match count {
                     0 => InputState::Unknown,
                     1 => InputState::Resolvable,
                     _ => InputState::Ambiguous,
@@ -753,6 +770,22 @@ mod tests {
                 level: crate::message::LogLevel::Info,
             },
         }
+    }
+
+    #[test]
+    fn filter_is_discoverable_in_completion_menu() {
+        let (mut fe, _rx) = frontend_with_cmds();
+        fe.replace_input("fil");
+        let menu = fe.menu_items();
+        assert!(
+            menu.iter().any(|(name, _)| name == "filter"),
+            "filter should appear in the completion menu, got {menu:?}",
+        );
+        // A unique prefix resolves (green), so Tab completes it.
+        assert_eq!(fe.input_state(), InputState::Resolvable);
+
+        fe.replace_input("unf");
+        assert!(fe.menu_items().iter().any(|(name, _)| name == "unfilter"));
     }
 
     #[test]

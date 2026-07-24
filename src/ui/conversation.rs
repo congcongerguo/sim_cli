@@ -28,7 +28,7 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState, visible: u
                 }
                 if *streaming {
                     lines.push(Line::from(Span::styled(
-                        "▌",
+                        "|",
                         Style::default().fg(Color::Cyan).add_modifier(Modifier::SLOW_BLINK),
                     )));
                 }
@@ -89,9 +89,9 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState, visible: u
 
     if !state.follow_tail && total_lines > visible {
         let hint = if state.unseen_lines > 0 {
-            format!(" ▼ {} new — PgDn to follow ", state.unseen_lines as u16)
+            format!(" v {} new - PgDn to follow ", state.unseen_lines as u16)
         } else {
-            " ▲ scrolled — PgDn to follow ".to_string()
+            " ^ scrolled - PgDn to follow ".to_string()
         };
         let hint_y = area.y + area.height.saturating_sub(1);
         let hint_area = Rect { x: area.x, y: hint_y, width: hint.len() as u16, height: 1 };

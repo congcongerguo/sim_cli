@@ -72,7 +72,7 @@ impl Tool for ConnTool {
             conn::ConnState::Connecting { protocol, .. } => {
                 return ToolState {
                     active: true,
-                    badge: Some(format!("{}: ⌛", protocol.as_str())),
+                    badge: Some(format!("{}: ...", protocol.as_str())),
                     ..Default::default()
                 };
             }

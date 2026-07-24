@@ -109,11 +109,13 @@ fn truncate(s: &str, width: usize) -> String {
         return s.to_string();
     }
     if width == 1 {
-        return "…".into();
+        return s.chars().next().map(String::from).unwrap_or_default();
     }
-    let take = width - 1;
+    // Reserve two columns for an ASCII ellipsis ("..") — single-width in every
+    // terminal, unlike "…" which is East-Asian-ambiguous and would overflow.
+    let take = width - 2;
     let mut out: String = s.chars().take(take).collect();
-    out.push('…');
+    out.push_str("..");
     out
 }
 
@@ -161,8 +163,10 @@ mod tests {
     #[test]
     fn truncate_keeps_ascii() {
         assert_eq!(truncate("hello", 10), "hello");
-        assert_eq!(truncate("hello world", 5), "hell…");
-        assert_eq!(truncate("hello", 1), "…");
+        assert_eq!(truncate("hello world", 5), "hel..");
+        assert_eq!(truncate("hello", 1), "h");
         assert_eq!(truncate("hello", 0), "");
+        // Result never exceeds the requested column budget.
+        assert!(truncate("hello world", 5).chars().count() <= 5);
     }
 }

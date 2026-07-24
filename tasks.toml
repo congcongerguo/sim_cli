@@ -2,8 +2,8 @@
 
 [[tool]]
 name = "conn"
-hint = "transport     —  con zmq|tcp / close / send"
+hint = "transport     -  con zmq|tcp / close / send"
 
 [[tool]]
 name = "demo"
-hint = "log demo      —  start / stop"
+hint = "log demo      -  start / stop"

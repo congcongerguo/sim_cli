@@ -21,13 +21,13 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState) {
     };
 
     let title_text = if state.streaming {
-        " streaming… ".to_string()
+        " streaming... ".to_string()
     } else {
         match state.input_state {
-            InputState::Ambiguous => " command  (ambiguous — Tab/Enter to pick) ".to_string(),
-            InputState::Unknown => " command  (unknown — Tab for suggestions) ".to_string(),
+            InputState::Ambiguous => " command  (ambiguous - Tab/Enter to pick) ".to_string(),
+            InputState::Unknown => " command  (unknown - Tab for suggestions) ".to_string(),
             InputState::Resolvable | InputState::Empty => {
-                " command  (Tab=complete  Enter=run  ↑↓=pick) ".to_string()
+                " command  (Tab=complete  Enter=run  Up/Dn=pick) ".to_string()
             }
         }
     };

@@ -6,19 +6,19 @@ use crate::message::{ToolCall, ToolStatus};
 pub fn tool_card_lines(t: &ToolCall) -> Vec<Line<'static>> {
     let (badge, badge_style) = match t.status {
         ToolStatus::AwaitingPermission => (
-            "⏳ awaiting permission",
+            "[?] awaiting permission",
             Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
         ),
         ToolStatus::Running => (
-            "● running",
+            "[*] running",
             Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
         ),
         ToolStatus::Done => (
-            "✓ done",
+            "[+] done",
             Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
         ),
         ToolStatus::Denied => (
-            "✗ denied",
+            "[x] denied",
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         ),
     };

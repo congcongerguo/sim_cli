@@ -22,9 +22,9 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState) {
     let left = Span::styled(left_text, Style::default().bg(left_bg).fg(Color::Black));
 
     let middle_text = if state.streaming {
-        " ● streaming "
+        " * streaming "
     } else if state.modal_request.is_some() {
-        " ⚑ awaiting permission "
+        " ! awaiting permission "
     } else {
         " idle "
     };
@@ -49,7 +49,7 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState) {
         })
     };
 
-    let hint = Span::styled(" ⏎ send  /  cmd  ^C exit  ←→ switch tab ", Style::default().fg(Color::DarkGray));
+    let hint = Span::styled(" Enter=send  cmd  ^C=exit  <-/->=tab ", Style::default().fg(Color::DarkGray));
 
     let mut left_spans = vec![left, middle];
     if let Some(fs) = filter_span {
