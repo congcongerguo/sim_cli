@@ -42,8 +42,12 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState) {
         ))
     } else {
         state.filter.as_ref().map(|f| {
+            let counts = state
+                .filter_counts
+                .map(|(shown, total)| format!(" ({shown}/{total})"))
+                .unwrap_or_default();
             Span::styled(
-                format!(" filter: {f} "),
+                format!(" filter: {f}{counts} "),
                 Style::default().bg(Color::Cyan).fg(Color::Black),
             )
         })
