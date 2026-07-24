@@ -169,6 +169,9 @@ impl Frontend {
         use crate::ui::render_state::RenderState;
         let menu = self.menu_items();
         let (messages, buffer_total_lines, evicted_lines) = self.effective_view();
+        let filter_active = self.current_tool().is_some_and(|t| self.filters.contains_key(&t));
+        let filter_counts =
+            filter_active.then(|| (messages.len(), self.view.messages.len()));
         RenderState {
             messages,
             streaming: self.view.streaming,
@@ -193,6 +196,7 @@ impl Frontend {
                 .and_then(|t| self.filters.get(&t))
                 .map(|f| f.src().to_string()),
             filter_error: self.current_tool().and_then(|t| self.filter_errors.get(&t).cloned()),
+            filter_counts,
         }
     }
 
@@ -871,7 +875,10 @@ mod tests {
         fe.view.active_index = 0;
         fe.view.messages = Arc::new(vec![sys("error x"), sys("ok y")]);
         assert_eq!(fe.effective_view().0.len(), 1, "tab 0 filter persisted");
-        assert_eq!(fe.build_render_state().filter.as_deref(), Some("/error/"));
+        let rs = fe.build_render_state();
+        assert_eq!(rs.filter.as_deref(), Some("/error/"));
+        // Status line shows shown/total for the active tab.
+        assert_eq!(rs.filter_counts, Some((1, 2)));
     }
 
     /// ↓ to the second sub-command then Enter must run that second item,

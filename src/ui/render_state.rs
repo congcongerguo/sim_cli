@@ -37,6 +37,9 @@ pub struct RenderState {
     pub filter: Option<String>,
     /// Message from the last rejected filter expression, if any.
     pub filter_error: Option<String>,
+    /// (shown, total) message counts when a filter is active — lets the status
+    /// line show how many messages the filter is currently matching.
+    pub filter_counts: Option<(usize, usize)>,
 }
 
 /// Values the renderer computes and returns to the frontend.

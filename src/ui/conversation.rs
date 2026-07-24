@@ -152,6 +152,7 @@ mod tests {
             modal_selected: 0,
             filter: None,
             filter_error: None,
+            filter_counts: None,
         }
     }
 
