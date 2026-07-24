@@ -19,7 +19,9 @@ const PLACEHOLDER: &str = "command (Tab to complete, Enter to run)";
 /// discoverable via Tab.
 const FRONTEND_CMDS: &[(&str, &str)] = &[
     ("filter", "show only matching lines (regex; && || ! ; e.g. filter /error/)"),
-    ("unfilter", "clear the display filter"),
+    ("unfilter", "clear the include filter"),
+    ("exclude", "hide matching lines (regex; && || ! ; e.g. exclude /debug/)"),
+    ("unexclude", "clear the exclude filter"),
 ];
 
 #[derive(Debug, Default)]
@@ -58,12 +60,17 @@ pub struct Frontend {
     view_rx: watch::Receiver<ViewState>,
     history: Vec<String>,
     history_cursor: Option<usize>,
-    /// Display-only log filters, keyed by tool (tab) name — each tab keeps its
-    /// own filter. Filters what the conversation shows; the log buffer and the
+    /// Display-only include filters, keyed by tool (tab) name — each tab keeps
+    /// its own. A message shows only if it matches. The log buffer and the
     /// message-log file are untouched.
     filters: HashMap<String, crate::filter::Filter>,
+    /// Display-only exclude filters, per tab: a message matching this is hidden.
+    /// Applied on top of the include filter.
+    excludes: HashMap<String, crate::filter::Filter>,
     /// Error from the last rejected `filter` expression, per tab.
     filter_errors: HashMap<String, String>,
+    /// Error from the last rejected `exclude` expression, per tab.
+    exclude_errors: HashMap<String, String>,
 }
 
 impl Frontend {
@@ -86,7 +93,9 @@ impl Frontend {
             history: Vec::new(),
             history_cursor: None,
             filters: HashMap::new(),
+            excludes: HashMap::new(),
             filter_errors: HashMap::new(),
+            exclude_errors: HashMap::new(),
         }
     }
 
@@ -100,67 +109,74 @@ impl Frontend {
     /// matching messages form a self-contained view (no evicted prefix), so the
     /// existing scroll machinery works unchanged on the filtered set.
     fn effective_view(&self) -> (Arc<Vec<crate::message::TimedMessage>>, u64, u64) {
-        let active = self.current_tool().and_then(|name| self.filters.get(&name));
-        match active {
-            None => (
+        let tool = self.current_tool();
+        let include = tool.as_ref().and_then(|n| self.filters.get(n));
+        let exclude = tool.as_ref().and_then(|n| self.excludes.get(n));
+        if include.is_none() && exclude.is_none() {
+            return (
                 self.view.messages.clone(),
                 self.view.buffer_total_lines,
                 self.view.evicted_lines,
-            ),
-            Some(f) => {
-                let filtered: Vec<crate::message::TimedMessage> = self
-                    .view
-                    .messages
-                    .iter()
-                    .filter(|tm| f.matches_msg(&tm.msg))
-                    .cloned()
-                    .collect();
-                let total: u64 = filtered
-                    .iter()
-                    .map(|tm| crate::log_buffer::msg_line_count(&tm.msg))
-                    .sum();
-                (Arc::new(filtered), total, 0)
-            }
+            );
         }
+        let filtered: Vec<crate::message::TimedMessage> = self
+            .view
+            .messages
+            .iter()
+            .filter(|tm| {
+                // Show if it matches the include filter (or there is none) and
+                // does NOT match the exclude filter.
+                include.is_none_or(|f| f.matches_msg(&tm.msg))
+                    && !exclude.is_some_and(|f| f.matches_msg(&tm.msg))
+            })
+            .cloned()
+            .collect();
+        let total: u64 = filtered
+            .iter()
+            .map(|tm| crate::log_buffer::msg_line_count(&tm.msg))
+            .sum();
+        (Arc::new(filtered), total, 0)
     }
 
-    /// Handle the display-only `filter` / `unfilter` commands locally (never
-    /// sent to the tool). Applies to the active tab only. Returns `true` if
-    /// `text` was such a command.
+    /// Handle the display-only view commands (`filter`/`unfilter` — show only
+    /// matches; `exclude`/`unexclude` — hide matches) locally, never sent to the
+    /// tool. Applies to the active tab only. Returns `true` if `text` was one.
     fn try_filter_command(&mut self, text: &str) -> bool {
         let trimmed = text.trim();
         let (cmd, rest) = match trimmed.split_once(char::is_whitespace) {
             Some((c, r)) => (c, r.trim()),
             None => (trimmed, ""),
         };
-        // Filters are per-tab; without an active tab there's nothing to key on.
+        if !matches!(cmd, "filter" | "unfilter" | "exclude" | "unexclude") {
+            return false;
+        }
+        // View filters are per-tab; without an active tab there's nothing to key on.
         let tool = match self.current_tool() {
             Some(t) => t,
-            None => return matches!(cmd, "filter" | "unfilter"),
+            None => return true,
         };
-        match cmd {
-            "filter" if rest.is_empty() => {
-                self.filters.remove(&tool);
-                self.filter_errors.remove(&tool);
-            }
-            "unfilter" => {
-                self.filters.remove(&tool);
-                self.filter_errors.remove(&tool);
-            }
-            "filter" => match crate::filter::Filter::parse(rest) {
+        let (map, errs) = match cmd {
+            "filter" | "unfilter" => (&mut self.filters, &mut self.filter_errors),
+            _ => (&mut self.excludes, &mut self.exclude_errors),
+        };
+        let clear = matches!(cmd, "unfilter" | "unexclude") || rest.is_empty();
+        if clear {
+            map.remove(&tool);
+            errs.remove(&tool);
+        } else {
+            match crate::filter::Filter::parse(rest) {
                 Ok(f) => {
-                    self.filters.insert(tool.clone(), f);
-                    self.filter_errors.remove(&tool);
+                    map.insert(tool.clone(), f);
+                    errs.remove(&tool);
                 }
                 Err(e) => {
-                    // Keep the previous filter; just report the error.
-                    self.filter_errors.insert(tool, e);
+                    // Keep the previous expression; just report the error.
+                    errs.insert(tool, e);
                     return true;
                 }
-            },
-            _ => return false,
+            }
         }
-        // A filter change re-bases the scroll coordinate; jump to the tail.
+        // A view-filter change re-bases the scroll coordinate; jump to the tail.
         self.scrollback = crate::scroll::Scrollback::default();
         true
     }
@@ -169,7 +185,9 @@ impl Frontend {
         use crate::ui::render_state::RenderState;
         let menu = self.menu_items();
         let (messages, buffer_total_lines, evicted_lines) = self.effective_view();
-        let filter_active = self.current_tool().is_some_and(|t| self.filters.contains_key(&t));
+        let filter_active = self.current_tool().is_some_and(|t| {
+            self.filters.contains_key(&t) || self.excludes.contains_key(&t)
+        });
         let filter_counts =
             filter_active.then(|| (messages.len(), self.view.messages.len()));
         RenderState {
@@ -196,6 +214,10 @@ impl Frontend {
                 .and_then(|t| self.filters.get(&t))
                 .map(|f| f.src().to_string()),
             filter_error: self.current_tool().and_then(|t| self.filter_errors.get(&t).cloned()),
+            exclude: self.current_tool()
+                .and_then(|t| self.excludes.get(&t))
+                .map(|f| f.src().to_string()),
+            exclude_error: self.current_tool().and_then(|t| self.exclude_errors.get(&t).cloned()),
             filter_counts,
         }
     }
@@ -848,6 +870,43 @@ mod tests {
 
         // The filter path never emits a tool command.
         assert!(cmd_rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn exclude_hides_matches_and_composes_with_filter() {
+        let (mut fe, _rx) = frontend_with_cmds();
+        fe.view.messages = Arc::new(vec![
+            sys("request /api ok"),
+            sys("request /health ok"),
+            sys("debug noise"),
+            sys("request /api error"),
+        ]);
+        fe.view.buffer_total_lines = 4;
+
+        // exclude hides matching lines.
+        assert!(fe.try_filter_command("exclude /debug/"));
+        assert_eq!(fe.effective_view().0.len(), 3);
+
+        // exclude supports AND/OR like filter.
+        assert!(fe.try_filter_command("exclude /health/ || /debug/"));
+        assert_eq!(fe.effective_view().0.len(), 2, "health and debug hidden");
+
+        // include + exclude compose: show requests, but not health.
+        assert!(fe.try_filter_command("filter /request/"));
+        assert!(fe.try_filter_command("exclude /health/"));
+        let (msgs, _, _) = fe.effective_view();
+        assert_eq!(msgs.len(), 2, "two /api request lines remain");
+
+        // Status line reflects both, plus the shown/total count.
+        let rs = fe.build_render_state();
+        assert_eq!(rs.filter.as_deref(), Some("/request/"));
+        assert_eq!(rs.exclude.as_deref(), Some("/health/"));
+        assert_eq!(rs.filter_counts, Some((2, 4)));
+
+        // Clearing exclude leaves the include filter in place.
+        assert!(fe.try_filter_command("unexclude"));
+        assert_eq!(fe.effective_view().0.len(), 3, "3 request lines");
+        assert!(fe.build_render_state().exclude.is_none());
     }
 
     #[test]

@@ -34,21 +34,35 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState) {
         Color::DarkGray
     }));
 
-    // Active display filter (or the error from a rejected expression).
-    let filter_span = if let Some(ref err) = state.filter_error {
+    // Active include filter (or the error from a rejected expression). The
+    // shown/total count sits on whichever filter chip is present.
+    let counts = state
+        .filter_counts
+        .map(|(shown, total)| format!(" ({shown}/{total})"))
+        .unwrap_or_default();
+    let include_span = if let Some(ref err) = state.filter_error {
         Some(Span::styled(
             format!(" filter error: {err} "),
             Style::default().bg(Color::Red).fg(Color::Black),
         ))
     } else {
         state.filter.as_ref().map(|f| {
-            let counts = state
-                .filter_counts
-                .map(|(shown, total)| format!(" ({shown}/{total})"))
-                .unwrap_or_default();
             Span::styled(
-                format!(" filter: {f}{counts} "),
+                format!(" filter: {f} "),
                 Style::default().bg(Color::Cyan).fg(Color::Black),
+            )
+        })
+    };
+    let exclude_span = if let Some(ref err) = state.exclude_error {
+        Some(Span::styled(
+            format!(" exclude error: {err} "),
+            Style::default().bg(Color::Red).fg(Color::Black),
+        ))
+    } else {
+        state.exclude.as_ref().map(|f| {
+            Span::styled(
+                format!(" exclude: {f} "),
+                Style::default().bg(Color::Magenta).fg(Color::Black),
             )
         })
     };
@@ -56,8 +70,18 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState) {
     let hint = Span::styled(" Enter=send  cmd  ^C=exit  <-/->=tab ", Style::default().fg(Color::DarkGray));
 
     let mut left_spans = vec![left, middle];
-    if let Some(fs) = filter_span {
+    if let Some(fs) = include_span {
         left_spans.push(fs);
+    }
+    if let Some(es) = exclude_span {
+        left_spans.push(es);
+    }
+    // Show the shown/total count once, after the filter chips, if any filter is on.
+    if !counts.is_empty() && (state.filter.is_some() || state.exclude.is_some()) {
+        left_spans.push(Span::styled(
+            format!("{counts} "),
+            Style::default().fg(Color::Gray),
+        ));
     }
     let left_line = Line::from(left_spans);
     let right_line = Line::from(hint);
