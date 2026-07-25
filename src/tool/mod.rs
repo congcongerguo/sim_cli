@@ -5,10 +5,6 @@
 //!
 //! 新增 tool 只需实现 [`Tool`] trait + 在 `registry` 注册，无需改动框架代码。
 
-#[cfg(feature = "conn-task")]
-pub mod conn;
-#[cfg(feature = "demo-task")]
-pub mod demo;
 pub mod registry;
 
 use std::sync::Arc;
@@ -235,19 +231,26 @@ fn log_msg(log: &mut LogBuffer, tool: &str, m: Message) {
 
 use registry::ToolDef;
 
-/// 根据 tool 名创建实例。由 Router 调用。
-pub fn create(def: &'static ToolDef) -> Option<(ToolHandle, Arc<Vec<Cmd>>)> {
-    #[cfg(feature = "conn-task")]
-    if def.name == "conn" {
-        let tool = conn::ConnTool::new(def);
-        let cmds = Arc::new(build_cmds(tool.commands()));
-        return Some((spawn(def.name.to_string(), tool, cmds.clone()), cmds));
-    }
-    #[cfg(feature = "demo-task")]
-    if def.name == "demo" {
-        let tool = demo::DemoTool::new();
-        let cmds = Arc::new(build_cmds(tool.commands()));
-        return Some((spawn(def.name.to_string(), tool, cmds.clone()), cmds));
-    }
-    None
+/// 声明 tool 模块并生成工厂函数。每个 tool 一行："module::Type,"。
+macro_rules! register_tools {
+    ($($mod:ident :: $ty:ident),* $(,)?) => {
+        $(pub mod $mod;)*
+
+        /// 根据 tool 名创建实例。由 Router 调用。
+        pub fn create(def: &'static ToolDef) -> Option<(ToolHandle, Arc<Vec<Cmd>>)> {
+            $(
+                if def.name == stringify!($mod) {
+                    let tool = $mod::$ty::new(def);
+                    let cmds = Arc::new(build_cmds(tool.commands()));
+                    return Some((spawn(def.name.to_string(), tool, cmds.clone()), cmds));
+                }
+            )*
+            None
+        }
+    };
+}
+
+register_tools! {
+    conn::ConnTool,
+    demo::DemoTool,
 }

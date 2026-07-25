@@ -13,7 +13,7 @@ pub struct DemoTool {
 }
 
 impl DemoTool {
-    pub fn new() -> Self {
+    pub fn new(_def: &'static super::registry::ToolDef) -> Self {
         Self { state: State::Idle }
     }
 }

@@ -1,1 +1,7 @@
-//! LLM interaction stubs. Currently unused; placeholder for future model integration.
+//! LLM 交互桩（stub）。当前未使用，为将来接入模型预留。
+//!
+//! 计划支持的流程：
+//! 1. 用户输入 → 发送给 LLM
+//! 2. LLM 返回文本/工具调用 → Router 分发
+//! 3. 工具执行结果 → 回传给 LLM
+//! 4. 循环直到 LLM 返回最终回复

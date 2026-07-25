@@ -22,7 +22,6 @@ pub enum LogLevel {
     Warn,
     Notice,
     Info,
-    #[cfg_attr(not(feature = "demo-task"), allow(dead_code))]
     Debug,
 }
 
