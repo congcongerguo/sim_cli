@@ -341,14 +341,9 @@ impl Frontend {
                 _ => return None,
             }
         }
-        // If the partial token exactly names a group command, descend into it so
-        // its sub-commands are previewed (bare "con" shows tcp/zmq/…).
-        if !prefix.is_empty()
-            && let Some(node) = level.iter().find(|c| c.name == prefix && !c.subs.is_empty())
-        {
-            path.push(node.name);
-            return Some(Completion { path, prefix: String::new() });
-        }
+        // Note: a fully-typed group name (e.g. "con") is NOT auto-descended
+        // here — its sub-commands only appear once the user presses Enter (or
+        // adds a space). See `exact_group_at_cursor`.
         Some(Completion { path, prefix: prefix.to_string() })
     }
 
@@ -398,16 +393,20 @@ impl Frontend {
         Some(format!("{}{}", head(&ctx.path), menu[idx].0))
     }
 
-    /// When the user has typed a complete group-command name with no trailing
-    /// space, `completion_ctx` descends into it (empty prefix under a non-empty
-    /// path). Return the breadcrumb text (with trailing space) so Enter can
-    /// materialize the descent — e.g. "con" → "con ".
+    /// If the token at the cursor exactly names a group command (has
+    /// sub-commands) with no trailing space, return the drilled-in text (with a
+    /// trailing space) so Enter opens its sub-command selection instead of
+    /// running the command — e.g. "con" → "con ".
     fn exact_group_at_cursor(&self) -> Option<String> {
         if self.current_text().ends_with(char::is_whitespace) {
             return None;
         }
         let ctx = self.completion_ctx()?;
-        (ctx.prefix.is_empty() && !ctx.path.is_empty()).then(|| head(&ctx.path))
+        let is_group = self
+            .candidates(&ctx.path)
+            .iter()
+            .any(|(name, _, has_children)| *has_children && *name == ctx.prefix);
+        is_group.then(|| format!("{}{} ", head(&ctx.path), ctx.prefix))
     }
 
     pub fn menu_title(&self) -> Option<String> {
@@ -999,25 +998,23 @@ mod tests {
         assert_eq!(recv_input(&mut cmd_rx), "con beta");
     }
 
-    /// ↓ first, THEN Enter — the arrow selection must survive the
-    /// space-append so the second Enter picks the correct sub.
+    /// Typing a group name does NOT auto-open its sub-commands. Only the group
+    /// itself is offered (marked as a group); Enter is what enters sub-command
+    /// selection.
     #[test]
-    fn down_before_enter_preserves_selection() {
-        let (mut fe, mut cmd_rx) = frontend_with_cmds();
+    fn bare_group_does_not_auto_open_subs() {
+        let (mut fe, _rx) = frontend_with_cmds();
         fe.replace_input("con");
 
-        // Down → highlight "beta" (idx 1) before pressing Enter.
-        fe.on_key(key(KeyCode::Down));
-        assert_eq!(fe.menu_idx, 1);
+        // Only "con" itself is listed, not tcp/zmq/etc.
+        assert_eq!(names(&fe), vec!["con"]);
+        assert!(fe.menu_items()[0].2, "con is marked as a group");
+        assert_eq!(fe.input_state(), InputState::Resolvable);
 
-        // Enter → appends space, must NOT reset menu_idx.
+        // Enter enters sub-command selection: appends a space, shows the subs.
         fe.on_key(key(KeyCode::Enter));
         assert_eq!(fe.current_text(), "con ");
-        assert_eq!(fe.menu_idx, 1, "selection must survive Enter");
-
-        // Second Enter → submits the selected item.
-        fe.on_key(key(KeyCode::Enter));
-        assert_eq!(recv_input(&mut cmd_rx), "con beta");
+        assert_eq!(names(&fe), vec!["alpha", "beta", "gamma"]);
     }
 
     // A three-level command tree: net > iface > up/down, plus net > route (leaf).
