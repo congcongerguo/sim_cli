@@ -62,15 +62,21 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState) {
         let lines: Vec<Line> = menu
             .iter()
             .enumerate()
-            .map(|(i, (name, desc))| {
+            .map(|(i, (name, desc, has_children))| {
                 let style = if i == state.menu_idx {
                     Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()
                 };
+                // Mark group commands (which have sub-commands) with a ">".
+                let label = if *has_children {
+                    format!(" {name} >")
+                } else {
+                    format!(" {name}")
+                };
                 Line::from(vec![
-                    Span::styled(format!(" {name:<10} "), style),
-                    Span::styled(format!("{desc} "), Style::default().fg(Color::Gray)),
+                    Span::styled(format!("{label:<12}"), style),
+                    Span::styled(format!(" {desc} "), Style::default().fg(Color::Gray)),
                 ])
             })
             .collect();
