@@ -2,16 +2,16 @@ use crate::message::{LogLevel, Message};
 use crate::transport::{Protocol, TransportEvent};
 
 use crate::backend::conn::{self, ConnSubsystem};
-use super::{cmd, msg, Cmd, Sub, Tool, ToolState};
+use super::{cmd, group, msg, Cmd, Tool, ToolState};
 
 #[cfg(feature = "zmq")]
-const CON_SUBS: &[Sub] = &[
-    Sub { name: "tcp", desc: "TCP echo" },
-    Sub { name: "zmq", desc: "ZMQ pub/sub" },
+const CON_SUBS: &[Cmd] = &[
+    cmd("tcp", "TCP echo"),
+    cmd("zmq", "ZMQ pub/sub"),
 ];
 #[cfg(not(feature = "zmq"))]
-const CON_SUBS: &[Sub] = &[
-    Sub { name: "tcp", desc: "TCP echo" },
+const CON_SUBS: &[Cmd] = &[
+    cmd("tcp", "TCP echo"),
 ];
 
 pub struct ConnTool {
@@ -51,7 +51,7 @@ impl ConnTool {
 impl Tool for ConnTool {
     fn commands(&self) -> Vec<Cmd> {
         vec![
-            Cmd { name: "con", desc: "connect transport", subs: CON_SUBS },
+            group("con", "connect transport", CON_SUBS),
             cmd("close", "disconnect"),
             cmd("send", "send message"),
         ]

@@ -18,21 +18,22 @@ use crate::transport::TransportEvent;
 
 // ── 基础命令 ──────────────────────────────────────────────────────────
 
+/// 命令树节点。`subs` 为空即叶子命令;非空即分组命令,可任意嵌套多层。
 #[derive(Debug, Clone)]
 pub struct Cmd {
     pub name: &'static str,
     pub desc: &'static str,
-    pub subs: &'static [Sub],
+    pub subs: &'static [Cmd],
 }
 
-#[derive(Debug, Clone)]
-pub struct Sub {
-    pub name: &'static str,
-    pub desc: &'static str,
-}
-
+/// 叶子命令(无子命令)。
 pub const fn cmd(name: &'static str, desc: &'static str) -> Cmd {
     Cmd { name, desc, subs: &[] }
+}
+
+/// 分组命令(带子命令,可继续嵌套)。
+pub const fn group(name: &'static str, desc: &'static str, subs: &'static [Cmd]) -> Cmd {
+    Cmd { name, desc, subs }
 }
 
 pub fn base_cmds() -> Vec<Cmd> {
@@ -204,14 +205,20 @@ fn build_cmds(mut own: Vec<Cmd>) -> Vec<Cmd> {
 
 fn build_help(cmds: &[Cmd]) -> Vec<Message> {
     let mut s = String::from("commands:\n");
-    for c in cmds {
-        s.push_str(&format!("  {:<8} - {}\n", c.name, c.desc));
-        for sub in c.subs {
-            s.push_str(&format!("      {:<6} {}\n", sub.name, sub.desc));
-        }
-    }
+    write_cmd_tree(&mut s, cmds, 0);
     s.push_str("\n<-/-> switch tab  ^C exit");
     vec![Message::System { text: s, level: LogLevel::Info }]
+}
+
+/// Render a command tree as an indented list, recursing into sub-commands.
+fn write_cmd_tree(s: &mut String, cmds: &[Cmd], depth: usize) {
+    for c in cmds {
+        let indent = "  ".repeat(depth + 1);
+        // Widen the name column less as we indent, so descriptions stay aligned.
+        let width = 10usize.saturating_sub(depth * 2).max(1);
+        s.push_str(&format!("{indent}{:<width$} - {}\n", c.name, c.desc));
+        write_cmd_tree(s, c.subs, depth + 1);
+    }
 }
 
 /// 创建一条系统消息。

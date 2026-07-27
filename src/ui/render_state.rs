@@ -22,7 +22,9 @@ pub struct RenderState {
     #[allow(dead_code)]
     pub input_cursor: (u16, u16),
     pub input_state: InputState,
-    pub menu_items: Vec<(String, String)>,
+    /// Completion menu entries: (name, description, has_children). `has_children`
+    /// marks a group command that has sub-commands (rendered with a `>` marker).
+    pub menu_items: Vec<(String, String, bool)>,
     pub menu_idx: usize,
     pub menu_title: Option<String>,
     pub scroll_offset: u64,

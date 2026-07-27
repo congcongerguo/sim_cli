@@ -37,11 +37,22 @@ pub enum InputState {
     Unknown,
 }
 
-/// Completion context: are we matching a command prefix or a sub-command?
-enum CompletionCtx {
-    Command { prefix: String },
-    Sub { cmd_name: String, prefix: String },
-    None,
+/// Completion state for the current input: the already-typed command path
+/// (breadcrumb of matched group commands) plus the partial token being typed at
+/// that level. Supports arbitrary command-tree depth.
+struct Completion {
+    path: Vec<&'static str>,
+    prefix: String,
+}
+
+/// The input text prefix that reconstructs a completed command path, e.g.
+/// `["con"]` → `"con "`. Empty path → empty string.
+fn head(path: &[&str]) -> String {
+    if path.is_empty() {
+        String::new()
+    } else {
+        format!("{} ", path.join(" "))
+    }
 }
 
 pub struct Frontend {
@@ -199,7 +210,7 @@ impl Frontend {
             input_text: self.current_text(),
             input_cursor: (0, 0),
             input_state: self.input_state(),
-            menu_items: menu.into_iter().map(|(a, b)| (a.to_string(), b.to_string())).collect(),
+            menu_items: menu,
             menu_idx: self.menu_idx,
             menu_title: self.menu_title(),
             scroll_offset: self.scrollback.offset(),
@@ -298,132 +309,138 @@ impl Frontend {
         }
     }
 
-    fn completion_ctx(&self) -> CompletionCtx {
+    /// Walk the command tree over the already-typed tokens, returning the
+    /// matched path plus the partial token being typed. `None` when there's
+    /// nothing to complete (empty input, unknown command, or arguments after a
+    /// leaf command).
+    fn completion_ctx(&self) -> Option<Completion> {
         let text = self.current_text();
         let trimmed = text.trim();
         if trimmed.is_empty() {
-            return CompletionCtx::None;
+            return None;
         }
-        // Check if there's a trailing space → sub-command context
-        let has_trailing_space = text.ends_with(char::is_whitespace);
-        let parts: Vec<&str> = trimmed.split_whitespace().collect();
-        let first = parts[0].to_string();
-
-        if parts.len() == 1 && !has_trailing_space {
-            // "con" (exact match with subs) → show subs so Enter auto-completes.
-            let exact_match = self.view.active_cmds.iter().any(|c| c.name == first && !c.subs.is_empty());
-            if exact_match {
-                return CompletionCtx::Sub { cmd_name: first, prefix: String::new() };
-            }
-            // "co" → command prefix
-            return CompletionCtx::Command { prefix: first };
-        }
-
-        // "con " or "con t" → may be sub-context
-        let exact_match = self.view.active_cmds.iter().any(|c| c.name == first && !c.subs.is_empty());
-        if exact_match {
-            let sub_prefix = if parts.len() >= 2 { parts[1].to_string() } else { String::new() };
-            return CompletionCtx::Sub { cmd_name: first, prefix: sub_prefix };
-        }
-
-        // Still matching command prefix (e.g., "c " or "co " after a partial)
-        if parts.len() == 1 && has_trailing_space {
-            return CompletionCtx::Command { prefix: first };
-        }
-
-        CompletionCtx::None
-    }
-
-    pub fn menu_items(&self) -> Vec<(String, String)> {
-        match self.completion_ctx() {
-            CompletionCtx::Command { prefix } => {
-                let mut items: Vec<(String, String)> = self.view.active_cmds.iter()
-                    .filter(|c| c.name.starts_with(&prefix))
-                    .map(|c| (c.name.to_string(), c.desc.to_string()))
-                    .collect();
-                items.extend(
-                    FRONTEND_CMDS.iter()
-                        .filter(|(name, _)| name.starts_with(&prefix))
-                        .map(|(name, desc)| (name.to_string(), desc.to_string())),
-                );
-                items
-            }
-            CompletionCtx::Sub { cmd_name, prefix } => {
-                for c in self.view.active_cmds.iter() {
-                    if c.name == cmd_name {
-                        return c.subs.iter()
-                            .filter(|s| s.name.starts_with(&prefix))
-                            .map(|s| (s.name.to_string(), s.desc.to_string()))
-                            .collect();
-                    }
+        let trailing = text.ends_with(char::is_whitespace);
+        let tokens: Vec<&str> = trimmed.split_whitespace().collect();
+        // Tokens before the one being typed are "complete"; the last is the
+        // partial prefix (unless a trailing space finished it).
+        let (complete, prefix): (&[&str], &str) = if trailing {
+            (&tokens, "")
+        } else {
+            (&tokens[..tokens.len() - 1], tokens[tokens.len() - 1])
+        };
+        // Each complete token must exactly name a group command to descend.
+        let mut level: &[crate::tool::Cmd] = self.view.active_cmds.as_slice();
+        let mut path: Vec<&'static str> = Vec::new();
+        for tok in complete {
+            match level.iter().find(|c| c.name == *tok) {
+                Some(node) if !node.subs.is_empty() => {
+                    path.push(node.name);
+                    level = node.subs;
                 }
-                vec![]
+                // Leaf followed by more tokens = arguments; nothing to complete.
+                _ => return None,
             }
-            CompletionCtx::None => vec![],
+        }
+        // If the partial token exactly names a group command, descend into it so
+        // its sub-commands are previewed (bare "con" shows tcp/zmq/…).
+        if !prefix.is_empty()
+            && let Some(node) = level.iter().find(|c| c.name == prefix && !c.subs.is_empty())
+        {
+            path.push(node.name);
+            return Some(Completion { path, prefix: String::new() });
+        }
+        Some(Completion { path, prefix: prefix.to_string() })
+    }
+
+    /// Candidate commands available at a given path level: `(name, desc,
+    /// has_children)`. Frontend-only commands are offered at the root.
+    fn candidates(&self, path: &[&str]) -> Vec<(&'static str, &'static str, bool)> {
+        let mut level: &[crate::tool::Cmd] = self.view.active_cmds.as_slice();
+        for name in path {
+            match level.iter().find(|c| c.name == *name) {
+                Some(c) => level = c.subs,
+                None => return vec![],
+            }
+        }
+        let mut out: Vec<(&'static str, &'static str, bool)> = level
+            .iter()
+            .map(|c| (c.name, c.desc, !c.subs.is_empty()))
+            .collect();
+        if path.is_empty() {
+            out.extend(FRONTEND_CMDS.iter().map(|(n, d)| (*n, *d, false)));
+        }
+        out
+    }
+
+    /// Menu entries for the current input: `(name, desc, has_children)` filtered
+    /// by the partial prefix.
+    pub fn menu_items(&self) -> Vec<(String, String, bool)> {
+        match self.completion_ctx() {
+            Some(ctx) => self
+                .candidates(&ctx.path)
+                .into_iter()
+                .filter(|(name, _, _)| name.starts_with(&ctx.prefix))
+                .map(|(n, d, h)| (n.to_string(), d.to_string(), h))
+                .collect(),
+            None => vec![],
         }
     }
 
-    /// Full input text for the menu item currently highlighted by `menu_idx`,
-    /// including the `"cmd "` head for sub-command completions. Returns `None`
-    /// when no completion menu is open.
+    /// Full input text for the menu item highlighted by `menu_idx`, including
+    /// the breadcrumb head. `None` when no completion menu is open.
     fn highlighted_menu_text(&self) -> Option<String> {
         let menu = self.menu_items();
         if menu.is_empty() {
             return None;
         }
+        let ctx = self.completion_ctx()?;
         let idx = self.menu_idx.min(menu.len() - 1);
-        let head = match self.completion_ctx() {
-            CompletionCtx::Sub { cmd_name, .. } => format!("{cmd_name} "),
-            _ => String::new(),
-        };
-        Some(format!("{head}{}", menu[idx].0))
+        Some(format!("{}{}", head(&ctx.path), menu[idx].0))
+    }
+
+    /// When the user has typed a complete group-command name with no trailing
+    /// space, `completion_ctx` descends into it (empty prefix under a non-empty
+    /// path). Return the breadcrumb text (with trailing space) so Enter can
+    /// materialize the descent — e.g. "con" → "con ".
+    fn exact_group_at_cursor(&self) -> Option<String> {
+        if self.current_text().ends_with(char::is_whitespace) {
+            return None;
+        }
+        let ctx = self.completion_ctx()?;
+        (ctx.prefix.is_empty() && !ctx.path.is_empty()).then(|| head(&ctx.path))
     }
 
     pub fn menu_title(&self) -> Option<String> {
-        match self.completion_ctx() {
-            CompletionCtx::Sub { cmd_name, .. } => Some(format!("{cmd_name} <arg>")),
-            CompletionCtx::Command { .. } => {
-                if self.menu_items().is_empty() { None } else { Some("commands".into()) }
-            }
-            CompletionCtx::None => None,
+        let ctx = self.completion_ctx()?;
+        if self.menu_items().is_empty() {
+            return None;
+        }
+        if ctx.path.is_empty() {
+            Some("commands".into())
+        } else {
+            // Breadcrumb of the command tree, e.g. "con >".
+            Some(format!("{} >", ctx.path.join(" ")))
         }
     }
 
     pub fn input_state(&self) -> InputState {
-        let current = self.current_text();
-        if current.trim().is_empty() {
+        if self.current_text().trim().is_empty() {
             return InputState::Empty;
         }
         match self.completion_ctx() {
-            CompletionCtx::Command { prefix } => {
-                let count = self.view.active_cmds.iter()
-                    .filter(|c| c.name.starts_with(&prefix))
-                    .count()
-                    + FRONTEND_CMDS.iter()
-                        .filter(|(name, _)| name.starts_with(&prefix))
-                        .count();
+            None => InputState::Unknown,
+            Some(ctx) => {
+                let count = self
+                    .candidates(&ctx.path)
+                    .iter()
+                    .filter(|(name, _, _)| name.starts_with(&ctx.prefix))
+                    .count();
                 match count {
                     0 => InputState::Unknown,
                     1 => InputState::Resolvable,
                     _ => InputState::Ambiguous,
                 }
             }
-            CompletionCtx::Sub { cmd_name, prefix } => {
-                for c in self.view.active_cmds.iter() {
-                    if c.name == cmd_name {
-                        let matches: Vec<_> = c.subs.iter()
-                            .filter(|s| s.name.starts_with(&prefix))
-                            .collect();
-                        return match matches.len() {
-                            0 => InputState::Unknown,
-                            1 => InputState::Resolvable,
-                            _ => InputState::Ambiguous,
-                        };
-                    }
-                }
-                InputState::Unknown
-            }
-            CompletionCtx::None => InputState::Unknown,
         }
     }
 
@@ -606,16 +623,13 @@ impl Frontend {
             if self.view.streaming {
                 return;
             }
-            // Bare command with subs ("con") — Enter appends a space so the
-            // sub-menu appears and the user can choose. Keep menu_idx so the
-            // user's ↑↓ selection is preserved.
-            if let CompletionCtx::Sub { ref prefix, .. } = self.completion_ctx() {
-                if prefix.is_empty() && !self.current_text().ends_with(char::is_whitespace) {
-                    let cmd = self.current_text().trim().to_string();
-                    self.replace_input(&format!("{cmd} "));
-                    self.tab_cycle = None;
-                    return;
-                }
+            // A fully-typed group command ("con") — Enter appends a space so its
+            // sub-commands appear and the user can drill in, rather than running
+            // it. Keeps menu_idx so the user's ↑↓ selection is preserved.
+            if let Some(with_space) = self.exact_group_at_cursor() {
+                self.replace_input(&with_space);
+                self.tab_cycle = None;
+                return;
             }
             // If the completion menu is open, Enter commits the item currently
             // highlighted via ↑↓, not just whatever prefix was typed. Without this
@@ -682,19 +696,25 @@ impl Frontend {
     }
 
     fn handle_tab(&mut self) {
+        let ctx = match self.completion_ctx() {
+            Some(c) => c,
+            None => return,
+        };
         let menu = self.menu_items();
         if menu.is_empty() {
             return;
         }
-
-        // For sub-completions, preserve the command prefix ("con ") in the input.
-        let head = match self.completion_ctx() {
-            CompletionCtx::Sub { cmd_name, .. } => format!("{cmd_name} "),
-            _ => String::new(),
-        };
+        let head = head(&ctx.path);
 
         if menu.len() == 1 {
-            let text = format!("{head}{}", menu[0].0);
+            // Unique completion. If it's a group command, append a space so its
+            // sub-commands appear — Tab drills down the tree.
+            let (name, _, has_children) = &menu[0];
+            let text = if *has_children {
+                format!("{head}{name} ")
+            } else {
+                format!("{head}{name}")
+            };
             self.replace_input(&text);
             self.menu_idx = 0;
             self.tab_cycle = None;
@@ -710,35 +730,22 @@ impl Frontend {
                 start
             };
             self.menu_idx = new_idx;
-            let text = format!("{head}{}", menu[new_idx].0);
-            self.replace_input(&text);
+            self.replace_input(&format!("{head}{}", menu[new_idx].0));
         }
     }
 
-    /// Expand partial command/sub prefix to full name before sending.
+    /// Expand a partial command token to its full name before sending, when the
+    /// prefix uniquely identifies one command at the current tree level.
     fn expand_text(&self, text: String) -> String {
-        match self.completion_ctx() {
-            CompletionCtx::Command { prefix } => {
-                let matches: Vec<_> = self.view.active_cmds.iter()
-                    .filter(|c| c.name.starts_with(&prefix))
-                    .collect();
-                if matches.len() == 1 && matches[0].name != prefix {
-                    return matches[0].name.to_string();
-                }
+        if let Some(ctx) = self.completion_ctx() {
+            let matches: Vec<_> = self
+                .candidates(&ctx.path)
+                .into_iter()
+                .filter(|(name, _, _)| name.starts_with(&ctx.prefix))
+                .collect();
+            if matches.len() == 1 && matches[0].0 != ctx.prefix {
+                return format!("{}{}", head(&ctx.path), matches[0].0);
             }
-            CompletionCtx::Sub { cmd_name, prefix } => {
-                for c in self.view.active_cmds.iter() {
-                    if c.name == cmd_name {
-                        let matches: Vec<_> = c.subs.iter()
-                            .filter(|s| s.name.starts_with(&prefix))
-                            .collect();
-                        if matches.len() == 1 && matches[0].name != prefix {
-                            return format!("{cmd_name} {}", matches[0].name);
-                        }
-                    }
-                }
-            }
-            CompletionCtx::None => {}
         }
         text
     }
@@ -792,12 +799,12 @@ impl Frontend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tool::{Cmd, Sub};
+    use crate::tool::Cmd;
 
-    const SUBS: &[Sub] = &[
-        Sub { name: "alpha", desc: "" },
-        Sub { name: "beta", desc: "" },
-        Sub { name: "gamma", desc: "" },
+    const SUBS: &[Cmd] = &[
+        Cmd { name: "alpha", desc: "", subs: &[] },
+        Cmd { name: "beta", desc: "", subs: &[] },
+        Cmd { name: "gamma", desc: "", subs: &[] },
     ];
     const CMDS: &[Cmd] = &[Cmd { name: "con", desc: "", subs: SUBS }];
 
@@ -836,14 +843,14 @@ mod tests {
         fe.replace_input("fil");
         let menu = fe.menu_items();
         assert!(
-            menu.iter().any(|(name, _)| name == "filter"),
+            menu.iter().any(|(name, _, _)| name == "filter"),
             "filter should appear in the completion menu, got {menu:?}",
         );
         // A unique prefix resolves (green), so Tab completes it.
         assert_eq!(fe.input_state(), InputState::Resolvable);
 
         fe.replace_input("unf");
-        assert!(fe.menu_items().iter().any(|(name, _)| name == "unfilter"));
+        assert!(fe.menu_items().iter().any(|(name, _, _)| name == "unfilter"));
     }
 
     #[test]
@@ -1011,6 +1018,70 @@ mod tests {
         // Second Enter → submits the selected item.
         fe.on_key(key(KeyCode::Enter));
         assert_eq!(recv_input(&mut cmd_rx), "con beta");
+    }
+
+    // A three-level command tree: net > iface > up/down, plus net > route (leaf).
+    const L3: &[Cmd] = &[
+        Cmd { name: "up", desc: "", subs: &[] },
+        Cmd { name: "down", desc: "", subs: &[] },
+    ];
+    const L2: &[Cmd] = &[
+        Cmd { name: "iface", desc: "", subs: L3 },
+        Cmd { name: "route", desc: "", subs: &[] },
+    ];
+    const TREE: &[Cmd] = &[Cmd { name: "net", desc: "", subs: L2 }];
+
+    fn names(fe: &Frontend) -> Vec<String> {
+        fe.menu_items().into_iter().map(|(n, _, _)| n).collect()
+    }
+
+    #[test]
+    fn multi_level_tree_completion() {
+        let (mut fe, mut cmd_rx) = frontend_with_cmds();
+        fe.view.active_cmds = Arc::new(TREE.to_vec());
+
+        // Root: "ne" resolves to the group "net" (marked as having children).
+        fe.replace_input("ne");
+        assert_eq!(fe.input_state(), InputState::Resolvable);
+        assert!(fe.menu_items().iter().any(|(n, _, has)| n == "net" && *has));
+
+        // "net " previews level 2.
+        fe.replace_input("net ");
+        assert_eq!(names(&fe), vec!["iface", "route"]);
+        assert_eq!(fe.menu_title().as_deref(), Some("net >"));
+
+        // Descend a third level: "net iface " previews up/down.
+        fe.replace_input("net iface ");
+        assert_eq!(names(&fe), vec!["up", "down"]);
+        assert_eq!(fe.menu_title().as_deref(), Some("net iface >"));
+
+        // A leaf three levels deep resolves, and Enter runs the full command.
+        fe.replace_input("net iface up");
+        assert_eq!(fe.input_state(), InputState::Resolvable);
+        fe.on_key(key(KeyCode::Enter));
+        assert_eq!(recv_input(&mut cmd_rx), "net iface up");
+    }
+
+    #[test]
+    fn tab_drills_down_the_tree() {
+        let (mut fe, _rx) = frontend_with_cmds();
+        fe.view.active_cmds = Arc::new(TREE.to_vec());
+
+        // Tab on a unique group prefix completes it AND opens the next level.
+        fe.replace_input("ne");
+        fe.on_key(key(KeyCode::Tab));
+        assert_eq!(fe.current_text(), "net "); // drilled in
+        assert_eq!(names(&fe), vec!["iface", "route"]);
+    }
+
+    #[test]
+    fn args_after_leaf_have_no_menu() {
+        let (mut fe, _rx) = frontend_with_cmds();
+        fe.view.active_cmds = Arc::new(TREE.to_vec());
+        // "net route x" — route is a leaf, so "x" is an argument, not completion.
+        fe.replace_input("net route x");
+        assert!(fe.menu_items().is_empty());
+        assert_eq!(fe.input_state(), InputState::Unknown);
     }
 
     /// Two ↓ presses land on the third item; Enter runs it.
