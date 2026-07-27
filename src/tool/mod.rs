@@ -253,4 +253,5 @@ macro_rules! register_tools {
 register_tools! {
     conn::ConnTool,
     demo::DemoTool,
+    ser::SerTool,
 }

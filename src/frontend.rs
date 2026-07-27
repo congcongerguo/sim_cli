@@ -310,6 +310,11 @@ impl Frontend {
         let first = parts[0].to_string();
 
         if parts.len() == 1 && !has_trailing_space {
+            // "con" (exact match with subs) → show subs so Enter auto-completes.
+            let exact_match = self.view.active_cmds.iter().any(|c| c.name == first && !c.subs.is_empty());
+            if exact_match {
+                return CompletionCtx::Sub { cmd_name: first, prefix: String::new() };
+            }
             // "co" → command prefix
             return CompletionCtx::Command { prefix: first };
         }
@@ -600,6 +605,17 @@ impl Frontend {
         {
             if self.view.streaming {
                 return;
+            }
+            // Bare command with subs ("con") — Enter appends a space so the
+            // sub-menu appears and the user can choose. Keep menu_idx so the
+            // user's ↑↓ selection is preserved.
+            if let CompletionCtx::Sub { ref prefix, .. } = self.completion_ctx() {
+                if prefix.is_empty() && !self.current_text().ends_with(char::is_whitespace) {
+                    let cmd = self.current_text().trim().to_string();
+                    self.replace_input(&format!("{cmd} "));
+                    self.tab_cycle = None;
+                    return;
+                }
             }
             // If the completion menu is open, Enter commits the item currently
             // highlighted via ↑↓, not just whatever prefix was typed. Without this
@@ -950,6 +966,49 @@ mod tests {
         fe.on_key(key(KeyCode::Down)); // highlight "beta"
         assert_eq!(fe.menu_idx, 1);
 
+        fe.on_key(key(KeyCode::Enter));
+        assert_eq!(recv_input(&mut cmd_rx), "con beta");
+    }
+
+    /// Typing bare "con" then Enter opens sub-menu (appends space) without
+    /// submitting.  ↓ to the second item then Enter runs that item.
+    #[test]
+    fn bare_then_enter_then_down_then_enter_picks_correct_sub() {
+        let (mut fe, mut cmd_rx) = frontend_with_cmds();
+        fe.replace_input("con");
+
+        // Enter → should append space, show subs, NOT submit.
+        fe.on_key(key(KeyCode::Enter));
+        assert_eq!(fe.current_text(), "con ");
+        assert!(!fe.menu_items().is_empty(), "sub-menu should be open");
+        assert!(cmd_rx.try_recv().is_err(), "nothing submitted yet");
+
+        // Down → highlight second sub ("beta", idx 1).
+        fe.on_key(key(KeyCode::Down));
+        assert_eq!(fe.menu_idx, 1);
+
+        // Enter → should submit "con beta", not "con alpha".
+        fe.on_key(key(KeyCode::Enter));
+        assert_eq!(recv_input(&mut cmd_rx), "con beta");
+    }
+
+    /// ↓ first, THEN Enter — the arrow selection must survive the
+    /// space-append so the second Enter picks the correct sub.
+    #[test]
+    fn down_before_enter_preserves_selection() {
+        let (mut fe, mut cmd_rx) = frontend_with_cmds();
+        fe.replace_input("con");
+
+        // Down → highlight "beta" (idx 1) before pressing Enter.
+        fe.on_key(key(KeyCode::Down));
+        assert_eq!(fe.menu_idx, 1);
+
+        // Enter → appends space, must NOT reset menu_idx.
+        fe.on_key(key(KeyCode::Enter));
+        assert_eq!(fe.current_text(), "con ");
+        assert_eq!(fe.menu_idx, 1, "selection must survive Enter");
+
+        // Second Enter → submits the selected item.
         fe.on_key(key(KeyCode::Enter));
         assert_eq!(recv_input(&mut cmd_rx), "con beta");
     }

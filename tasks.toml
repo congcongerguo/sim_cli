@@ -7,3 +7,8 @@ hint = "transport     -  con zmq|tcp / close / send"
 [[tool]]
 name = "demo"
 hint = "log demo      -  start / stop"
+
+[[tool]]
+name = "ser"
+hint = "echo server   -  start / stop"
+tcp_addr = "127.0.0.1:7878"
