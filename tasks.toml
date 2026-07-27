@@ -6,7 +6,7 @@ hint = "transport     -  con zmq|tcp / close / send"
 
 [[tool]]
 name = "demo"
-hint = "log demo      -  start / stop"
+hint = "log demo      -  start / stop / log level ..."
 
 [[tool]]
 name = "ser"
