@@ -46,6 +46,11 @@ pub struct RenderState {
     /// (shown, total) message counts when any view filter is active — lets the
     /// status line show how many messages are currently visible.
     pub filter_counts: Option<(usize, usize)>,
+    /// Active `grep` archive search: (expression, match count). When set, the
+    /// conversation shows disk-history search results instead of the live view.
+    pub grep: Option<(String, usize)>,
+    /// Error from the last rejected `grep` expression, if any.
+    pub grep_error: Option<String>,
 }
 
 /// Values the renderer computes and returns to the frontend.

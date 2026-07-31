@@ -49,6 +49,11 @@ impl Filter {
         self.expr.matches(&message_text(msg))
     }
 
+    /// 一行原始文本是否匹配(用于对磁盘归档做 grep)。
+    pub fn matches_text(&self, text: &str) -> bool {
+        self.expr.matches(text)
+    }
+
     /// 原始表达式文本(状态栏展示用)。
     pub fn src(&self) -> &str {
         &self.src
