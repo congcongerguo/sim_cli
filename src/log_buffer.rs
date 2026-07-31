@@ -30,7 +30,19 @@ use std::collections::VecDeque;
 
 use crate::message::{Message, TimedMessage, Timestamp};
 
-pub const DEFAULT_MAX: usize = 100;
+/// Default in-memory live window (messages kept for on-screen scrollback).
+/// Older history lives on disk (see `msg_log`); this only bounds RAM. With
+/// virtualized rendering the render cost is O(viewport), not O(this).
+pub const DEFAULT_MAX: usize = 5000;
+
+/// In-memory buffer size, overridable via `SIM_CLI_LOG_BUFFER`.
+pub fn default_max() -> usize {
+    std::env::var("SIM_CLI_LOG_BUFFER")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(DEFAULT_MAX)
+}
 
 /// How many render lines a message produces. Must match conversation.rs rendering.
 pub fn msg_line_count(msg: &Message) -> u64 {
@@ -57,6 +69,9 @@ pub struct LogBuffer {
     max_entries: usize,
     total_evicted: u64,      // cumulative evicted message count (history)
     evicted_lines: u64,      // cumulative evicted render lines (history, for scroll)
+    /// Cached shared snapshot, rebuilt only when the buffer changes so `to_arc`
+    /// (called every push tick) doesn't deep-clone the buffer when nothing has.
+    snapshot: Option<std::sync::Arc<Vec<TimedMessage>>>,
 }
 
 impl LogBuffer {
@@ -64,7 +79,13 @@ impl LogBuffer {
         Self {
             messages: VecDeque::new(), max_entries,
             total_evicted: 0, evicted_lines: 0,
+            snapshot: None,
         }
+    }
+
+    /// Invalidate the cached snapshot after a mutation.
+    fn touch(&mut self) {
+        self.snapshot = None;
     }
 
     /// Add a message, stamping it with the current local time.
@@ -83,6 +104,7 @@ impl LogBuffer {
                 self.total_evicted += 1;
             }
         }
+        self.touch();
     }
 
     /// Number of messages currently held.
@@ -100,6 +122,7 @@ impl LogBuffer {
     pub fn clear(&mut self) {
         self.evicted_lines += self.total_lines();
         self.messages.clear();
+        self.touch();
     }
 
     /// Cumulative count of entries evicted (message count).
@@ -129,11 +152,13 @@ impl LogBuffer {
 
     /// Mutable reference to the last message (for streaming updates).
     pub fn last_mut(&mut self) -> Option<&mut Message> {
+        self.touch(); // conservatively invalidate: caller may mutate in place
         self.messages.back_mut().map(|e| &mut e.msg)
     }
 
     /// Mutable reference by index (for tool call lookups).
     pub fn get_mut(&mut self, index: usize) -> Option<&mut Message> {
+        self.touch();
         self.messages.get_mut(index).map(|e| &mut e.msg)
     }
 
@@ -143,10 +168,16 @@ impl LogBuffer {
         self.messages.iter().map(|e| e.msg.clone()).collect()
     }
 
-    /// Return a shared snapshot of the current buffer. Use this for ViewState
-    /// to avoid re-cloning the entire buffer every frame.
-    pub fn to_arc(&self) -> std::sync::Arc<Vec<TimedMessage>> {
-        std::sync::Arc::new(self.messages.iter().cloned().collect())
+    /// Return a shared snapshot of the current buffer. The snapshot is cached
+    /// and only rebuilt when the buffer has changed since the last call, so the
+    /// per-tick call in `tool::spawn` is O(1) while idle. Because it's cached,
+    /// an unchanged buffer returns the *same* `Arc`, letting callers detect
+    /// "nothing changed" by pointer identity.
+    pub fn to_arc(&mut self) -> std::sync::Arc<Vec<TimedMessage>> {
+        if self.snapshot.is_none() {
+            self.snapshot = Some(std::sync::Arc::new(self.messages.iter().cloned().collect()));
+        }
+        self.snapshot.clone().unwrap()
     }
 }
 
