@@ -37,5 +37,7 @@ async fn main() -> Result<()> {
 
     backend_handle.abort();
     drop(_guard);
+    // Flush any buffered log records to disk before exiting.
+    msg_log::flush();
     res
 }
