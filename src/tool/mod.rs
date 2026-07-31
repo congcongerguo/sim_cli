@@ -140,7 +140,7 @@ pub fn spawn(name: String, tool: impl Tool, cmds: Arc<Vec<Cmd>>) -> ToolHandle {
 
     let mut ctx = ToolCtx {
         name,
-        log: LogBuffer::new(crate::log_buffer::DEFAULT_MAX),
+        log: LogBuffer::new(crate::log_buffer::default_max()),
         tool: Box::new(tool),
     };
 
