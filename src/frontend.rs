@@ -302,7 +302,7 @@ impl Frontend {
 
     /// 每帧渲染后：记录视口尺寸并刷新未读行数(驱动 "▼ N new" 提示)。
     fn apply_output(&mut self, out: &crate::ui::render_state::RenderOutput) {
-        self.scrollback.on_frame(out.viewport_height, out.total_lines as u64);
+        self.scrollback.on_frame(out.viewport_height, out.total_lines);
     }
 
     pub async fn run<B: Backend>(&mut self, term: &mut Terminal<B>) -> Result<()> {

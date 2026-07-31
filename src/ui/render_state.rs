@@ -56,5 +56,5 @@ pub struct RenderState {
 /// Values the renderer computes and returns to the frontend.
 pub struct RenderOutput {
     pub viewport_height: u16,
-    pub total_lines: u16,
+    pub total_lines: u64,
 }

@@ -51,19 +51,20 @@ pub fn end() -> ScrollState {
     ScrollState { offset: 0, follow_tail: true }
 }
 
-/// Reconcile the absolute scroll coordinate into the `u16` offset that
-/// ratatui's `Paragraph::scroll` expects: subtract the evicted-line prefix and
-/// clamp into `[0, max_scroll]`. Follow-tail always pins to the bottom.
+/// Reconcile the absolute scroll coordinate into the buffer-relative logical
+/// line offset: subtract the evicted-line prefix and clamp into
+/// `[0, max_scroll]`. Follow-tail always pins to the bottom.
 ///
-/// This is the *single* place the absolute↔viewport conversion lives; both the
-/// renderer and the state machine go through it.
-pub fn viewport_offset(state: &ScrollState, input: &ScrollInput) -> u16 {
-    let off = if state.follow_tail {
+/// Returns a `u64` (not `u16`) so buffers larger than 65 535 lines scroll
+/// correctly — the virtualized renderer uses this to pick the visible window.
+///
+/// This is the *single* place the absolute↔viewport conversion lives.
+pub fn viewport_offset(state: &ScrollState, input: &ScrollInput) -> u64 {
+    if state.follow_tail {
         input.max_scroll()
     } else {
         state.offset.saturating_sub(input.evicted_lines).min(input.max_scroll())
-    };
-    off.min(u16::MAX as u64) as u16
+    }
 }
 
 /// All persistent scroll-back state for the conversation view: the pure
@@ -156,35 +157,39 @@ mod tests {
         assert!(!r.follow_tail);
     }
 
-    // The previous inline renderer math, kept here to pin viewport_offset to it.
-    fn legacy_offset(state: &ScrollState, input: &ScrollInput) -> u16 {
-        let total = input.total_lines as u16;
-        let max_scroll = total.saturating_sub(input.viewport);
-        if state.follow_tail {
-            max_scroll
-        } else {
-            let adjusted =
-                (state.offset.saturating_sub(input.evicted_lines)).min(u16::MAX as u64) as u16;
-            adjusted.min(max_scroll)
-        }
+    #[test]
+    fn viewport_offset_basic() {
+        // follow-tail pins to the bottom (max_scroll = total - viewport).
+        assert_eq!(viewport_offset(&bottom(), &buf()), 80); // 100 - 20
+        // detached: absolute offset minus the evicted prefix, clamped to range.
+        assert_eq!(viewport_offset(&detach(560), &buf()), 60); // 560 - 500
+        assert_eq!(viewport_offset(&detach(520), &buf()), 20);
+        assert_eq!(viewport_offset(&detach(0), &buf()), 0);
+        // beyond the bottom clamps to max_scroll.
+        assert_eq!(viewport_offset(&detach(1_000_000), &buf()), 80);
     }
 
     #[test]
-    fn viewport_offset_matches_legacy() {
-        let cases = [
-            (bottom(), buf()),
-            (detach(560), buf()),
-            (detach(520), buf()),
-            (detach(0), buf()),
-            (detach(1_000_000), buf()),
-            (bottom(), ScrollInput { viewport: 10, total_lines: 5, evicted_lines: 0 }),
-            (detach(3), ScrollInput { viewport: 10, total_lines: 40, evicted_lines: 2 }),
-        ];
-        for (st, inp) in cases {
+    fn viewport_offset_supports_buffers_over_u16() {
+        // Regression: with >65535 lines, follow-tail must reach the real bottom
+        // instead of clamping at u16::MAX.
+        let big = ScrollInput { viewport: 20, total_lines: 500_000, evicted_lines: 0 };
+        assert_eq!(viewport_offset(&bottom(), &big), 499_980);
+        assert!(viewport_offset(&bottom(), &big) > u16::MAX as u64);
+    }
+
+    #[test]
+    fn viewport_offset_matches_expected() {
+        for (st, inp, want) in [
+            (bottom(), buf(), 80u64),
+            (detach(560), buf(), 60),
+            (bottom(), ScrollInput { viewport: 10, total_lines: 5, evicted_lines: 0 }, 0),
+            (detach(3), ScrollInput { viewport: 10, total_lines: 40, evicted_lines: 2 }, 1),
+        ] {
             assert_eq!(
                 viewport_offset(&st, &inp),
-                legacy_offset(&st, &inp),
-                "mismatch for state={st:?} input={inp:?}",
+                want,
+                "for state={st:?} input={inp:?}",
             );
         }
     }
