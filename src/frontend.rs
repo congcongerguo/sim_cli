@@ -22,6 +22,8 @@ const FRONTEND_CMDS: &[(&str, &str)] = &[
     ("unfilter", "clear the include filter"),
     ("exclude", "hide matching lines (regex; && || ! ; e.g. exclude /debug/)"),
     ("unexclude", "clear the exclude filter"),
+    ("grep", "search the on-disk history (regex; && || ! ; e.g. grep /error/)"),
+    ("ungrep", "clear search results, back to live"),
 ];
 
 #[derive(Debug, Default)]
@@ -82,6 +84,12 @@ pub struct Frontend {
     filter_errors: HashMap<String, String>,
     /// Error from the last rejected `exclude` expression, per tab.
     exclude_errors: HashMap<String, String>,
+    /// Active `grep` search over the on-disk archive: (expression, matching
+    /// lines as messages). When set, the conversation shows these results
+    /// instead of the live buffer, until `ungrep`.
+    grep: Option<(String, Arc<Vec<crate::message::TimedMessage>>)>,
+    /// Error from the last rejected `grep` expression.
+    grep_error: Option<String>,
 }
 
 impl Frontend {
@@ -107,6 +115,28 @@ impl Frontend {
             excludes: HashMap::new(),
             filter_errors: HashMap::new(),
             exclude_errors: HashMap::new(),
+            grep: None,
+            grep_error: None,
+        }
+    }
+
+    /// Max results a single `grep` collects from the archive.
+    const GREP_LIMIT: usize = 5000;
+
+    /// Parse a persisted log line ("YYYY-MM-DD HH:MM:SS.mmm [tool] body") back
+    /// into a display message, recovering the timestamp so it renders like a
+    /// live message.
+    fn grep_line_to_msg(line: &str) -> crate::message::TimedMessage {
+        use chrono::TimeZone;
+        let time = line
+            .get(..23)
+            .and_then(|ts| chrono::NaiveDateTime::parse_from_str(ts, "%Y-%m-%d %H:%M:%S%.3f").ok())
+            .and_then(|ndt| chrono::Local.from_local_datetime(&ndt).single())
+            .unwrap_or_else(chrono::Local::now);
+        let text = line.get(24..).unwrap_or(line).to_string();
+        crate::message::TimedMessage {
+            time,
+            msg: crate::message::Message::System { text, level: crate::message::LogLevel::Info },
         }
     }
 
@@ -120,6 +150,11 @@ impl Frontend {
     /// matching messages form a self-contained view (no evicted prefix), so the
     /// existing scroll machinery works unchanged on the filtered set.
     fn effective_view(&self) -> (Arc<Vec<crate::message::TimedMessage>>, u64, u64) {
+        // A `grep` result view replaces the live buffer entirely.
+        if let Some((_, results)) = &self.grep {
+            let total = results.iter().map(|tm| crate::log_buffer::msg_line_count(&tm.msg)).sum();
+            return (results.clone(), total, 0);
+        }
         let tool = self.current_tool();
         let include = tool.as_ref().and_then(|n| self.filters.get(n));
         let exclude = tool.as_ref().and_then(|n| self.excludes.get(n));
@@ -149,15 +184,21 @@ impl Frontend {
         (Arc::new(filtered), total, 0)
     }
 
-    /// Handle the display-only view commands (`filter`/`unfilter` — show only
-    /// matches; `exclude`/`unexclude` — hide matches) locally, never sent to the
-    /// tool. Applies to the active tab only. Returns `true` if `text` was one.
+    /// Handle the display-only view commands locally, never sent to the tool:
+    /// `filter`/`unfilter` (show only matches), `exclude`/`unexclude` (hide
+    /// matches), and `grep`/`ungrep` (search the on-disk archive). Returns
+    /// `true` if `text` was one of these.
     fn try_filter_command(&mut self, text: &str) -> bool {
         let trimmed = text.trim();
         let (cmd, rest) = match trimmed.split_once(char::is_whitespace) {
             Some((c, r)) => (c, r.trim()),
             None => (trimmed, ""),
         };
+        // grep searches the shared archive (all tabs); it's not per-tab.
+        if matches!(cmd, "grep" | "ungrep") {
+            self.run_grep(cmd, rest);
+            return true;
+        }
         if !matches!(cmd, "filter" | "unfilter" | "exclude" | "unexclude") {
             return false;
         }
@@ -190,6 +231,30 @@ impl Frontend {
         // A view-filter change re-bases the scroll coordinate; jump to the tail.
         self.scrollback = crate::scroll::Scrollback::default();
         true
+    }
+
+    /// Run (or clear) a `grep` search over the on-disk archive. Synchronous but
+    /// bounded (newest-first, capped) — an explicit search action.
+    fn run_grep(&mut self, cmd: &str, rest: &str) {
+        if cmd == "ungrep" || rest.is_empty() {
+            self.grep = None;
+            self.grep_error = None;
+        } else {
+            match crate::filter::Filter::parse(rest) {
+                Ok(f) => {
+                    let lines = crate::msg_log::scan(|l| f.matches_text(l), Self::GREP_LIMIT);
+                    let msgs: Vec<crate::message::TimedMessage> =
+                        lines.iter().map(|l| Self::grep_line_to_msg(l)).collect();
+                    self.grep = Some((f.src().to_string(), Arc::new(msgs)));
+                    self.grep_error = None;
+                }
+                Err(e) => {
+                    self.grep_error = Some(e);
+                    return;
+                }
+            }
+        }
+        self.scrollback = crate::scroll::Scrollback::default();
     }
 
     pub fn build_render_state(&self) -> crate::ui::render_state::RenderState {
@@ -230,6 +295,8 @@ impl Frontend {
                 .map(|f| f.src().to_string()),
             exclude_error: self.current_tool().and_then(|t| self.exclude_errors.get(&t).cloned()),
             filter_counts,
+            grep: self.grep.as_ref().map(|(expr, results)| (expr.clone(), results.len())),
+            grep_error: self.grep_error.clone(),
         }
     }
 
@@ -929,6 +996,36 @@ mod tests {
         assert!(fe.try_filter_command("unexclude"));
         assert_eq!(fe.effective_view().0.len(), 3, "3 request lines");
         assert!(fe.build_render_state().exclude.is_none());
+    }
+
+    #[test]
+    fn grep_view_replaces_live_and_parses_lines() {
+        let (mut fe, _rx) = frontend_with_cmds();
+        fe.view.messages = Arc::new(vec![sys("live message")]);
+        fe.view.buffer_total_lines = 1;
+
+        // A persisted archive line parses back into a display message, keeping
+        // "[tool] body" as the text and recovering the timestamp.
+        let m = Frontend::grep_line_to_msg("2026-07-20 14:23:01.123 [conn] NOTICE connected");
+        assert!(matches!(&m.msg,
+            crate::message::Message::System { text, .. } if text == "[conn] NOTICE connected"));
+
+        // With grep results set, effective_view returns them, not the live buffer.
+        fe.grep = Some(("/conn/".into(), Arc::new(vec![m])));
+        let (msgs, total, evicted) = fe.effective_view();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(total, 1);
+        assert_eq!(evicted, 0);
+        assert_eq!(fe.build_render_state().grep, Some(("/conn/".to_string(), 1)));
+
+        // ungrep clears it, back to the live view.
+        assert!(fe.try_filter_command("ungrep"));
+        assert!(fe.grep.is_none());
+        assert_eq!(fe.effective_view().0.len(), 1);
+
+        // grep is a recognized frontend command (discoverable in the menu).
+        fe.replace_input("gr");
+        assert!(fe.menu_items().iter().any(|(n, _, _)| n == "grep"));
     }
 
     #[test]

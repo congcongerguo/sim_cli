@@ -67,9 +67,28 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState) {
         })
     };
 
+    // Active archive search (or its error). This replaces the live view, so
+    // make it prominent.
+    let grep_span = if let Some(ref err) = state.grep_error {
+        Some(Span::styled(
+            format!(" grep error: {err} "),
+            Style::default().bg(Color::Red).fg(Color::Black),
+        ))
+    } else {
+        state.grep.as_ref().map(|(expr, n)| {
+            Span::styled(
+                format!(" grep: {expr} ({n} — ungrep to return) "),
+                Style::default().bg(Color::Yellow).fg(Color::Black),
+            )
+        })
+    };
+
     let hint = Span::styled(" Enter=send  cmd  ^C=exit  <-/->=tab ", Style::default().fg(Color::DarkGray));
 
     let mut left_spans = vec![left, middle];
+    if let Some(gs) = grep_span {
+        left_spans.push(gs);
+    }
     if let Some(fs) = include_span {
         left_spans.push(fs);
     }

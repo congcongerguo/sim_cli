@@ -161,6 +161,8 @@ mod tests {
             exclude: None,
             exclude_error: None,
             filter_counts: None,
+            grep: None,
+            grep_error: None,
         }
     }
 

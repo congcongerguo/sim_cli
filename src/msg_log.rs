@@ -195,6 +195,72 @@ pub fn record(tool: &str, msg: &Message) {
     record_at(chrono::Local::now(), tool, msg);
 }
 
+/// 单次 grep 最多扫描的行数(封顶,避免在超大归档上卡太久)。
+const SCAN_CAP_LINES: usize = 2_000_000;
+
+/// 在磁盘归档(当前文件 + 所有轮转文件)里搜索匹配 `pred` 的行。
+///
+/// 从**最新**往旧扫,收集到 `limit` 条或扫过 `SCAN_CAP_LINES` 行即停 ——
+/// 保证在大归档上也能快速返回"最近的匹配"。返回结果按**时间顺序**
+/// (旧→新)排列。逐行读取(`BufReader`),内存占用有界。
+pub fn scan<F: Fn(&str) -> bool>(pred: F, limit: usize) -> Vec<String> {
+    flush(); // make buffered-but-not-yet-written lines visible to the search
+    let base = env_path();
+    let max_files = env_u64("SIM_CLI_LOG_MAX_FILES", DEFAULT_MAX_FILES as u64) as usize;
+    scan_files(&base, max_files, pred, limit)
+}
+
+/// Search a specific archive (base + its rotated files). Split out from `scan`
+/// so it's testable without the process-global writer/env.
+pub(crate) fn scan_files<F: Fn(&str) -> bool>(
+    base: &PathBuf,
+    max_files: usize,
+    pred: F,
+    limit: usize,
+) -> Vec<String> {
+    use std::io::{BufRead, BufReader};
+
+    // Newest → oldest: base is the current file, then .1, .2, …
+    let mut files = vec![base.clone()];
+    for i in 1..=max_files {
+        files.push(rotated(base, i));
+    }
+
+    let mut per_file: Vec<Vec<String>> = Vec::with_capacity(files.len());
+    let mut found = 0usize;
+    let mut scanned = 0usize;
+    'outer: for path in &files {
+        let mut matches = Vec::new();
+        if let Ok(file) = File::open(path) {
+            for line in BufReader::new(file).lines() {
+                let Ok(line) = line else { break };
+                scanned += 1;
+                if pred(&line) {
+                    matches.push(line);
+                    found += 1;
+                    if found >= limit {
+                        per_file.push(matches);
+                        break 'outer;
+                    }
+                }
+                if scanned >= SCAN_CAP_LINES {
+                    per_file.push(matches);
+                    break 'outer;
+                }
+            }
+        }
+        per_file.push(matches);
+    }
+
+    // We scanned newest file first; emit oldest file first for chronological order
+    // (lines within each file are already chronological).
+    let mut out = Vec::new();
+    for matches in per_file.iter().rev() {
+        out.extend(matches.iter().cloned());
+    }
+    out
+}
+
 /// 阻塞直到后台写线程把已投递的记录 flush 到磁盘。用于优雅退出与测试。
 #[allow(dead_code)]
 pub fn flush() {
@@ -357,6 +423,33 @@ mod tests {
         assert!(std::fs::read_to_string(&base).unwrap().contains("line-6"), "newest in current");
         assert!(std::fs::read_to_string(rotated(&base, 2)).unwrap().contains("line-0"), "oldest kept in .2");
         cleanup(&base, 2);
+    }
+
+    #[test]
+    fn scan_searches_across_rotated_files_chronologically() {
+        let base = tmp("scan.log");
+        cleanup(&base, 2);
+        // Oldest → newest lives across .2, .1, base.
+        std::fs::write(rotated(&base, 2), "a error 0\nb ok 1\n").unwrap();
+        std::fs::write(rotated(&base, 1), "c error 2\nd ok 3\n").unwrap();
+        std::fs::write(&base, "e error 4\nf ok 5\n").unwrap();
+
+        let hits = scan_files(&base, 2, |l| l.contains("error"), 100);
+        // Chronological: oldest file first, oldest line first.
+        assert_eq!(hits, vec!["a error 0", "c error 2", "e error 4"]);
+        cleanup(&base, 2);
+    }
+
+    #[test]
+    fn scan_limit_keeps_most_recent_matches() {
+        let base = tmp("scan_limit.log");
+        cleanup(&base, 1);
+        std::fs::write(rotated(&base, 1), "old error\n").unwrap();
+        std::fs::write(&base, "new error\n").unwrap();
+        // limit=1: newest-first scan stops after one match → the newest.
+        let hits = scan_files(&base, 1, |l| l.contains("error"), 1);
+        assert_eq!(hits, vec!["new error"]);
+        cleanup(&base, 1);
     }
 
     #[test]
