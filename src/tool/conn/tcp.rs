@@ -2,7 +2,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
 
-use super::{JsonFramer, Protocol, TransportEvent, TransportHandle};
+use crate::json_framer::JsonFramer;
+use super::protocol::{Protocol, TransportEvent, TransportHandle};
 
 /// Soft cap on bytes the framer is allowed to accumulate without producing a
 /// complete message. Guards against an open quote or unbalanced brace eating

@@ -14,8 +14,6 @@ use tokio::sync::{mpsc, watch};
 
 use crate::log_buffer::LogBuffer;
 use crate::message::{LogLevel, Message, TimedMessage};
-use crate::transport::TransportEvent;
-
 // ── 基础命令 ──────────────────────────────────────────────────────────
 
 /// 命令树节点。`subs` 为空即叶子命令;非空即分组命令,可任意嵌套多层。
@@ -79,17 +77,6 @@ pub trait Tool: Send + 'static {
 
     /// snapshot 推送间隔（毫秒）。
     fn push_ms(&self) -> u64 { 100 }
-
-    /// 如果 tool 有 transport，返回事件接收端让框架 select 在其上。
-    /// 默认返回空 channel（永不触发）。
-    fn take_transport_rx(&mut self) -> mpsc::Receiver<TransportEvent> {
-        let (tx, rx) = mpsc::channel(1);
-        std::mem::forget(tx);
-        rx
-    }
-
-    /// 收到 transport 事件时调用。
-    fn on_transport(&mut self, _ev: TransportEvent) -> Vec<Message> { vec![] }
 }
 
 // ── 框架内部类型 ──────────────────────────────────────────────────────
@@ -149,7 +136,6 @@ pub fn spawn(name: String, tool: impl Tool, cmds: Arc<Vec<Cmd>>) -> ToolHandle {
         let push_ms = ctx.tool.push_ms();
         let mut tick = tokio::time::interval(Duration::from_millis(tick_ms));
         let mut push = tokio::time::interval(Duration::from_millis(push_ms));
-        let mut transport_rx = ctx.tool.take_transport_rx();
 
         loop {
             tokio::select! {
@@ -173,11 +159,6 @@ pub fn spawn(name: String, tool: impl Tool, cmds: Arc<Vec<Cmd>>) -> ToolHandle {
                     }
                     None => break,
                 },
-                maybe_ev = transport_rx.recv() => {
-                    if let Some(ev) = maybe_ev {
-                        for m in ctx.tool.on_transport(ev) { log_msg(&mut ctx.log, &ctx.name, m); }
-                    }
-                }
                 _ = tick.tick() => {
                     for m in ctx.tool.tick() { log_msg(&mut ctx.log, &ctx.name, m); }
                 }

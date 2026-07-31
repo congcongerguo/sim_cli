@@ -1,6 +1,6 @@
 use crate::message::{LogLevel, Message};
 
-use super::{cmd, group, msg, Cmd, Tool, ToolState};
+use super::{Cmd, Tool, ToolState, cmd, group, msg};
 
 // A multi-level command tree example:  log > level > debug|info|notice
 //                                       log > reset
@@ -28,7 +28,10 @@ pub struct DemoTool {
 
 impl DemoTool {
     pub fn new(_def: &'static super::registry::ToolDef) -> Self {
-        Self { state: State::Idle, level: LogLevel::Debug }
+        Self {
+            state: State::Idle,
+            level: LogLevel::Debug,
+        }
     }
 
     /// Handle the nested `log …` command tree. `args` is the path after `log`.
@@ -96,7 +99,10 @@ impl Tool for DemoTool {
             State::Running { counter } => {
                 let n = *counter;
                 *counter += 1;
-                vec![Message::System { text: format!("{n}"), level: self.level }]
+                vec![Message::System {
+                    text: format!("{n}"),
+                    level: self.level,
+                }]
             }
             State::Idle => vec![],
         }
@@ -113,7 +119,9 @@ impl Tool for DemoTool {
         }
     }
 
-    fn tick_ms(&self) -> u64 { 1000 }
+    fn tick_ms(&self) -> u64 {
+        10
+    }
 }
 
 #[cfg(test)]
@@ -121,7 +129,10 @@ mod tests {
     use super::*;
 
     fn demo() -> DemoTool {
-        DemoTool { state: State::Running { counter: 5 }, level: LogLevel::Debug }
+        DemoTool {
+            state: State::Running { counter: 5 },
+            level: LogLevel::Debug,
+        }
     }
 
     #[test]
@@ -129,10 +140,22 @@ mod tests {
         let mut d = demo();
         // Three-level command: log > level > info.
         let out = d.handle("log", &["level", "info"]);
-        assert!(matches!(out[0], Message::System { level: LogLevel::Notice, .. }));
+        assert!(matches!(
+            out[0],
+            Message::System {
+                level: LogLevel::Notice,
+                ..
+            }
+        ));
         // Subsequent periodic messages use the new level.
         let tick = d.tick();
-        assert!(matches!(tick[0], Message::System { level: LogLevel::Info, .. }));
+        assert!(matches!(
+            tick[0],
+            Message::System {
+                level: LogLevel::Info,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -148,7 +171,13 @@ mod tests {
     fn log_unknown_level_warns() {
         let mut d = demo();
         let out = d.handle("log", &["level", "bogus"]);
-        assert!(matches!(out[0], Message::System { level: LogLevel::Warn, .. }));
+        assert!(matches!(
+            out[0],
+            Message::System {
+                level: LogLevel::Warn,
+                ..
+            }
+        ));
         // Level unchanged.
         assert_eq!(d.level, LogLevel::Debug);
     }

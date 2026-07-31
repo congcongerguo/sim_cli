@@ -1,8 +1,3 @@
-pub mod tcp;
-#[cfg(feature = "zmq")]
-pub mod zmq;
-
-pub use crate::json_framer::JsonFramer;
 use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -57,8 +52,8 @@ pub fn spawn(
     ev_tx: mpsc::Sender<TransportEvent>,
 ) -> TransportHandle {
     match protocol {
-        Protocol::Tcp => tcp::spawn(addr, ev_tx),
+        Protocol::Tcp => super::tcp::spawn(addr, ev_tx),
         #[cfg(feature = "zmq")]
-        Protocol::Zmq => zmq::spawn(addr, ev_tx),
+        Protocol::Zmq => super::zmq::spawn(addr, ev_tx),
     }
 }

@@ -2,7 +2,7 @@ use chrono::{DateTime, Local};
 use tokio::sync::mpsc;
 
 use crate::message::LogLevel;
-use crate::transport::{self, Protocol, TransportEvent, TransportHandle};
+use crate::tool::conn::protocol::{self, Protocol, TransportEvent, TransportHandle};
 
 /// 事件通道缓冲区大小。
 const CHANNEL_BUFFER: usize = 64;
@@ -65,10 +65,9 @@ pub enum ConnOutcome {
 /// - 连接生命周期管理（connect / disconnect）
 /// - 消息收发（send_ping / 接收 JSON）
 /// - 维护收发计数器和最近接收的数据
-/// - 生成传输事件通道供外部 select 使用
 pub struct ConnSubsystem {
     /// 当前连接状态
-    pub(crate) conn: ConnState,
+    pub(super) conn: ConnState,
     /// 当前传输层句柄（None 表示未连接）
     handle: Option<TransportHandle>,
     /// 发送消息计数器
@@ -76,13 +75,13 @@ pub struct ConnSubsystem {
     /// 接收消息计数器
     recv_counter: u64,
     /// 最近收到的 JSON 值
-    pub(crate) latest_recv: Option<serde_json::Value>,
+    pub(super) latest_recv: Option<serde_json::Value>,
     /// 最近收到消息的时间
-    pub(crate) latest_recv_at: Option<DateTime<Local>>,
+    pub(super) latest_recv_at: Option<DateTime<Local>>,
     /// 传输事件发送端（用于向 channel 写入事件）
     ev_tx: mpsc::Sender<TransportEvent>,
-    /// 传输事件接收端（供外部 select 循环使用）
-    pub(crate) ev_rx: mpsc::Receiver<TransportEvent>,
+    /// 传输事件接收端（供 ConnTool::tick() 轮询使用）
+    pub(super) ev_rx: mpsc::Receiver<TransportEvent>,
 }
 
 impl ConnSubsystem {
@@ -98,21 +97,6 @@ impl ConnSubsystem {
             ev_tx,
             ev_rx,
         }
-    }
-
-    /// 取出传输事件接收端，供外部 select 循环使用。
-    ///
-    /// 取出后用 dummy channel 替换内部字段，使后续 `tick()` 轮询无害
-    ///（但更推荐的做法是让框架直接 select 此 channel）。
-    pub fn take_rx(&mut self) -> mpsc::Receiver<TransportEvent> {
-        let (_, dummy) = mpsc::channel(1);
-        std::mem::replace(&mut self.ev_rx, dummy)
-    }
-
-    /// 返回发送端的克隆，用于在新建传输任务时传递。
-    #[allow(dead_code)]
-    pub fn sender(&self) -> mpsc::Sender<TransportEvent> {
-        self.ev_tx.clone()
     }
 
     /// 发起连接。
@@ -134,7 +118,7 @@ impl ConnSubsystem {
             addr: addr.clone(),
         };
         // 启动传输层任务，事件通过 ev_tx 发回
-        self.handle = Some(transport::spawn(protocol, addr.clone(), self.ev_tx.clone()));
+        self.handle = Some(protocol::spawn(protocol, addr.clone(), self.ev_tx.clone()));
         vec![ConnOutcome::Connecting { protocol, addr }]
     }
 

@@ -10,10 +10,8 @@ mod message;
 mod msg_log;
 #[cfg(feature = "mock-llm")]
 mod mock_llm;
-mod proto;
 mod terminal;
 mod tool;
-mod transport;
 mod ui;
 
 use anyhow::Result;

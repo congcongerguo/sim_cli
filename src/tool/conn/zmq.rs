@@ -2,8 +2,8 @@ use prost::Message;
 use tokio::sync::mpsc;
 use zeromq::{PubSocket, Socket, SocketOptions, SocketRecv, SocketSend, SubSocket, ZmqMessage};
 
-use super::{Protocol, TransportEvent, TransportHandle};
-use crate::proto::sim;
+use super::protocol::{Protocol, TransportEvent, TransportHandle};
+use super::proto::sim;
 
 /// Local port the CLI's PUB socket binds to so its `send` messages reach any
 /// external subscriber (e.g. the `zmq_pub_server` test binary). The SUB connect

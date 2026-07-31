@@ -1,7 +1,16 @@
-use crate::message::{LogLevel, Message};
-use crate::transport::{Protocol, TransportEvent};
+mod protocol;
+mod subsystem;
 
-use crate::backend::conn::{self, ConnSubsystem};
+#[cfg(feature = "zmq")]
+mod zmq;
+#[cfg(feature = "zmq")]
+mod proto;
+mod tcp;
+
+use crate::message::{LogLevel, Message};
+
+use self::protocol::Protocol;
+use self::subsystem::ConnSubsystem;
 use super::{cmd, group, msg, Cmd, Tool, ToolState};
 
 #[cfg(feature = "zmq")]
@@ -68,16 +77,16 @@ impl Tool for ConnTool {
 
     fn snapshot(&self) -> ToolState {
         let (label, active) = match &self.conn.conn {
-            conn::ConnState::Disconnected => ("off".to_string(), false),
-            conn::ConnState::Connecting { protocol, .. } => {
+            subsystem::ConnState::Disconnected => ("off".to_string(), false),
+            subsystem::ConnState::Connecting { protocol, .. } => {
                 return ToolState {
                     active: true,
                     badge: Some(format!("{}: ...", protocol.as_str())),
                     ..Default::default()
                 };
             }
-            conn::ConnState::Connected { addr, .. } => (addr.clone(), true),
-            conn::ConnState::Error(e) => (e.chars().take(40).collect(), false),
+            subsystem::ConnState::Connected { addr, .. } => (addr.clone(), true),
+            subsystem::ConnState::Error(e) => (e.chars().take(40).collect(), false),
         };
         let mut fields: Vec<(String, String)> = Vec::new();
         if let Some(ref v) = self.conn.latest_recv {
@@ -90,20 +99,21 @@ impl Tool for ConnTool {
         }
     }
 
-    fn take_transport_rx(&mut self) -> tokio::sync::mpsc::Receiver<TransportEvent> {
-        self.conn.take_rx()
-    }
-
+    /// Drain transport events via polling, same pattern as `SerTool::tick()`.
     fn tick(&mut self) -> Vec<Message> {
-        vec![]
+        let mut msgs = Vec::new();
+        while let Ok(ev) = self.conn.ev_rx.try_recv() {
+            msgs.extend(self.conn.handle_event(ev).into_iter().map(|o| fmt_outcome(&o)));
+        }
+        msgs
     }
 
-    fn on_transport(&mut self, ev: TransportEvent) -> Vec<Message> {
-        self.conn.handle_event(ev).into_iter().map(|o| fmt_outcome(&o)).collect()
+    fn tick_ms(&self) -> u64 {
+        50
     }
 }
 
-fn fmt_outcome(o: &conn::ConnOutcome) -> Message {
-    let (text, level) = conn::format(o);
+fn fmt_outcome(o: &subsystem::ConnOutcome) -> Message {
+    let (text, level) = subsystem::format(o);
     Message::System { text, level }
 }

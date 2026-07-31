@@ -12,7 +12,6 @@
 //! - 从每个 Tool 的 watch channel 拉取 [`ViewUpdate`]，聚合为 [`ViewState`] 推送给前端
 
 mod chat;
-pub mod conn;
 mod llm;
 mod modal;
 
