@@ -8,10 +8,11 @@ use crate::message::{LogLevel, Message, Timestamp};
 use crate::ui::render_state::RenderState;
 use crate::ui::tool_card::tool_card_lines;
 
-pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState, visible: u16) -> u16 {
-    let total_lines = state.buffer_total_lines.min(u16::MAX as u64) as u16;
+pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState, visible: u16) -> u64 {
+    let total_lines = state.buffer_total_lines;
 
-    // Absolute→buffer-relative scroll (logical-line offset). One place only.
+    // Absolute→buffer-relative scroll (logical-line offset, u64 so buffers
+    // larger than 65 535 lines still scroll correctly). One place only.
     let scroll = crate::scroll::viewport_offset(
         &crate::scroll::ScrollState {
             offset: state.scroll_offset,
@@ -22,7 +23,7 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState, visible: u
             total_lines: state.buffer_total_lines,
             evicted_lines: state.evicted_lines,
         },
-    ) as u64;
+    );
     let window_end = scroll + visible.max(1) as u64;
 
     // Virtualized build: only materialize lines for the messages whose
@@ -56,9 +57,9 @@ pub fn render_ratatui(f: &mut Frame, area: Rect, state: &RenderState, visible: u
         .scroll((intra, 0));
     f.render_widget(para, area);
 
-    if !state.follow_tail && total_lines > visible {
+    if !state.follow_tail && total_lines > visible as u64 {
         let hint = if state.unseen_lines > 0 {
-            format!(" v {} new - PgDn to follow ", state.unseen_lines as u16)
+            format!(" v {} new - PgDn to follow ", state.unseen_lines)
         } else {
             " ^ scrolled - PgDn to follow ".to_string()
         };
@@ -223,6 +224,16 @@ mod tests {
         assert!(text.contains("msg-994"), "top of the 6-row window visible");
         assert!(!text.contains("msg-993"), "just above the window is not rendered");
         assert!(!text.contains("msg-0 "), "the head is not rendered");
+    }
+
+    #[test]
+    fn buffer_over_u16_follows_the_real_tail() {
+        // Regression for the "stuck at ~65535" bug: with more than u16::MAX
+        // lines, following the tail must reach the true end, not clamp.
+        let state = state_with(many(70_000), 70_000);
+        let text = buffer_text(&state);
+        assert!(text.contains("msg-69999"), "must reach the real tail:\n{text}");
+        assert!(!text.contains("msg-65000"), "not stuck near u16::MAX");
     }
 
     #[test]
