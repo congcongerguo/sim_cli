@@ -514,22 +514,34 @@ impl Frontend {
         let _ = self.cmd_tx.try_send(cmd);
     }
 
+    /// 从当前 tab 起,按 `dir`(+1 向右 / -1 向左)找下一个「可用」的 tab。
+    /// 跳过所有 `available == false` 的 tab;若没有其它可用 tab 则返回 `None`。
+    fn next_available_tab(&self, dir: isize) -> Option<usize> {
+        let n = self.view.tools.len();
+        if n == 0 { return None; }
+        let cur = self.view.active_index as isize;
+        for step in 1..=n as isize {
+            let idx = (cur + dir * step).rem_euclid(n as isize) as usize;
+            if idx == self.view.active_index { break; }
+            if self.view.tools[idx].available {
+                return Some(idx);
+            }
+        }
+        None
+    }
+
     fn tab_next(&mut self) {
-        if self.view.tools.len() <= 1 { return; }
-        let next = (self.view.active_index + 1) % self.view.tools.len();
-        let name = self.view.tools[next].name.clone();
-        self.send(Command::TagSwitch(name));
+        if let Some(idx) = self.next_available_tab(1) {
+            let name = self.view.tools[idx].name.clone();
+            self.send(Command::TagSwitch(name));
+        }
     }
 
     fn tab_prev(&mut self) {
-        if self.view.tools.len() <= 1 { return; }
-        let prev = if self.view.active_index == 0 {
-            self.view.tools.len() - 1
-        } else {
-            self.view.active_index - 1
-        };
-        let name = self.view.tools[prev].name.clone();
-        self.send(Command::TagSwitch(name));
+        if let Some(idx) = self.next_available_tab(-1) {
+            let name = self.view.tools[idx].name.clone();
+            self.send(Command::TagSwitch(name));
+        }
     }
 
     fn on_key(&mut self, key: KeyEvent) {
@@ -1057,6 +1069,63 @@ mod tests {
         assert_eq!(rs.filter.as_deref(), Some("/error/"));
         // Status line shows shown/total for the active tab.
         assert_eq!(rs.filter_counts, Some((1, 2)));
+    }
+
+    fn recv_switch(rx: &mut mpsc::Receiver<Command>) -> Option<String> {
+        match rx.try_recv() {
+            Ok(Command::TagSwitch(name)) => Some(name),
+            Err(_) => None,
+            other => panic!("expected TagSwitch or empty, got {other:?}"),
+        }
+    }
+
+    fn tool_info(name: &str, available: bool) -> crate::tool::ToolInfo {
+        crate::tool::ToolInfo { name: name.into(), active: false, available }
+    }
+
+    /// ←/→ navigation skips tabs whose runtime `available` flag is false.
+    #[test]
+    fn tab_navigation_skips_unavailable() {
+        let (mut fe, mut rx) = frontend_with_cmds();
+        // three tabs, the middle one disabled at runtime.
+        fe.view.tools = Arc::new(vec![
+            tool_info("a", true),
+            tool_info("b", false),
+            tool_info("c", true),
+        ]);
+        fe.view.active_index = 0;
+
+        // → from "a" jumps over the disabled "b" straight to "c".
+        fe.tab_next();
+        assert_eq!(recv_switch(&mut rx).as_deref(), Some("c"));
+
+        // From "c", → wraps around past "b" back to "a".
+        fe.view.active_index = 2;
+        fe.tab_next();
+        assert_eq!(recv_switch(&mut rx).as_deref(), Some("a"));
+
+        // ← from "a" wraps backwards, again skipping "b", landing on "c".
+        fe.view.active_index = 0;
+        fe.tab_prev();
+        assert_eq!(recv_switch(&mut rx).as_deref(), Some("c"));
+    }
+
+    /// When every other tab is unavailable, navigation is a no-op (no switch
+    /// command is emitted) rather than landing on a disabled tab.
+    #[test]
+    fn tab_navigation_noop_when_no_other_available() {
+        let (mut fe, mut rx) = frontend_with_cmds();
+        fe.view.tools = Arc::new(vec![
+            tool_info("a", true),
+            tool_info("b", false),
+            tool_info("c", false),
+        ]);
+        fe.view.active_index = 0;
+
+        fe.tab_next();
+        assert_eq!(recv_switch(&mut rx), None, "no available target → no switch");
+        fe.tab_prev();
+        assert_eq!(recv_switch(&mut rx), None, "no available target → no switch");
     }
 
     /// ↓ to the second sub-command then Enter must run that second item,

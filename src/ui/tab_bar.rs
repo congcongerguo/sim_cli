@@ -11,13 +11,19 @@ pub fn render(f: &mut Frame, area: Rect, tools: &[ToolInfo], active: usize) {
     let mut spans: Vec<Span> = Vec::new();
 
     for (i, t) in tools.iter().enumerate() {
-        let (fg, bg) = if i == active {
+        let (fg, bg) = if !t.available {
+            // 运行期不可用:整块灰显,无法切入。
+            (Color::DarkGray, Color::Black)
+        } else if i == active {
             (Color::White, Color::Blue)
         } else {
             (Color::Gray, Color::DarkGray)
         };
 
-        let (dot, dot_color) = if t.active {
+        // 标记位:不可用显示 'x',运行中显示 '*',其余留空。
+        let (dot, dot_color) = if !t.available {
+            ("x", Color::DarkGray)
+        } else if t.active {
             ("*", Color::Green)
         } else {
             (" ", Color::DarkGray)
@@ -26,9 +32,13 @@ pub fn render(f: &mut Frame, area: Rect, tools: &[ToolInfo], active: usize) {
             format!(" {dot} "),
             Style::default().fg(dot_color).bg(bg),
         ));
+        let mut name_style = Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD);
+        if !t.available {
+            name_style = name_style.add_modifier(Modifier::DIM);
+        }
         spans.push(Span::styled(
             format!(" {} ", t.name),
-            Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
+            name_style,
         ));
     }
 
