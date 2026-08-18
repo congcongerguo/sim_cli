@@ -78,7 +78,7 @@ impl ViewState {
     /// 作为初始欢迎消息。
     pub fn initial() -> Self {
         let tools: Vec<ToolInfo> = TOOL_DEFS.iter()
-            .map(|d| ToolInfo { name: d.name.into(), active: false })
+            .map(|d| ToolInfo { name: d.name.into(), active: false, available: true })
             .collect();
         let first = TOOL_DEFS.first();
         let msg = match first {
@@ -111,6 +111,8 @@ struct ToolEntry {
     name: String,
     handle: ToolHandle,
     cmds: Arc<Vec<tool::Cmd>>,
+    /// 运行期是否可用(平台/环境门控)。不可用的 tab 灰显且不可切入。
+    available: bool,
 }
 
 /// 后端路由器。
@@ -139,17 +141,21 @@ impl Router {
     /// 当没有任何 Tool 被成功创建时 panic（说明配置有问题）。
     pub fn new() -> Self {
         let tools: Vec<ToolEntry> = TOOL_DEFS.iter().filter_map(|def| {
-            tool::create(def).map(|(handle, cmds)| ToolEntry { name: def.name.to_string(), handle, cmds })
+            tool::create(def).map(|(handle, cmds, available)| {
+                ToolEntry { name: def.name.to_string(), handle, cmds, available }
+            })
         }).collect();
         assert!(!tools.is_empty(), "no tools created — check features and tasks.toml");
-        Self { tools, active: 0, should_quit: false, modal: modal::ModalSubsystem::new() }
+        // 初始激活第一个「可用」的 tab;若全都不可用则退回第 0 个。
+        let active = tools.iter().position(|t| t.available).unwrap_or(0);
+        Self { tools, active, should_quit: false, modal: modal::ModalSubsystem::new() }
     }
 
     /// 从所有 Tool 的 watch channel 读取最新快照，构建完整视图状态。
     fn build_view(&self) -> ViewState {
         let tool_infos: Vec<ToolInfo> = self.tools.iter().map(|t| {
             let snap = t.handle.view_rx.borrow();
-            ToolInfo { name: snap.name.clone(), active: snap.state.active }
+            ToolInfo { name: snap.name.clone(), active: snap.state.active, available: t.available }
         }).collect();
 
         let active = &self.tools[self.active];
@@ -197,8 +203,8 @@ pub async fn run(
                     }
                 }
                 Some(Command::TagSwitch(name)) => {
-                    // 按名称查找 tab 并切换
-                    if let Some(pos) = router.tools.iter().position(|t| t.name == name) {
+                    // 按名称查找 tab 并切换;不可用的 tab 拒绝切入。
+                    if let Some(pos) = router.tools.iter().position(|t| t.name == name && t.available) {
                         router.active = pos;
                     }
                 }

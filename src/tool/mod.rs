@@ -14,6 +14,7 @@ use tokio::sync::{mpsc, watch};
 
 use crate::log_buffer::LogBuffer;
 use crate::message::{LogLevel, Message, TimedMessage};
+
 // ── 基础命令 ──────────────────────────────────────────────────────────
 
 /// 命令树节点。`subs` 为空即叶子命令;非空即分组命令,可任意嵌套多层。
@@ -77,6 +78,36 @@ pub trait Tool: Send + 'static {
 
     /// snapshot 推送间隔（毫秒）。
     fn push_ms(&self) -> u64 { 100 }
+
+    /// 运行时是否可用。返回 `false` 时该 tab 仍会显示,但呈灰色禁用态,
+    /// 无法通过 ←/→ 切换进入,输入也不会转发给它。
+    ///
+    /// 与编译期 `#[cfg(...)]` 门控(见 `register_tools!`)互补:
+    /// - 编译期决定某个 tool 是否**编入**二进制(不同平台不同集合);
+    /// - 运行期 `available()` 决定已编入的 tool **此刻能否使用**
+    ///   (可根据 `std::env::consts::OS/ARCH`、环境变量、探测结果动态判断)。
+    ///
+    /// 例:仅在 Linux 上启用某 tool
+    /// ```ignore
+    /// fn available(&self) -> bool { cfg!(target_os = "linux") }
+    /// ```
+    fn available(&self) -> bool { true }
+}
+
+/// 运行时统一禁用开关:环境变量 `SIM_CLI_DISABLED_TOOLS` 里(逗号分隔)
+/// 列出的 tool 名会被标记为不可用,方便在不重新编译的情况下按平台/部署
+/// 关掉某些 tab。与 [`Tool::available`] 取逻辑与。
+fn runtime_disabled(name: &str) -> bool {
+    std::env::var("SIM_CLI_DISABLED_TOOLS")
+        .ok()
+        .is_some_and(|list| name_in_list(&list, name))
+}
+
+/// `name` 是否出现在逗号分隔的禁用清单里(去空白、忽略大小写、跳过空项)。
+fn name_in_list(list: &str, name: &str) -> bool {
+    list.split(',')
+        .map(str::trim)
+        .any(|t| !t.is_empty() && t.eq_ignore_ascii_case(name))
 }
 
 // ── 框架内部类型 ──────────────────────────────────────────────────────
@@ -110,6 +141,8 @@ pub struct ToolHandle {
 pub struct ToolInfo {
     pub name: String,
     pub active: bool,
+    /// 运行期是否可用。`false` 时 tab 灰显且无法切入。
+    pub available: bool,
 }
 
 // ── spawn ──────────────────────────────────────────────────────────────
@@ -219,18 +252,40 @@ fn log_msg(log: &mut LogBuffer, tool: &str, m: Message) {
 
 use registry::ToolDef;
 
-/// 声明 tool 模块并生成工厂函数。每个 tool 一行："module::Type,"。
+/// 声明 tool 模块并生成工厂函数。每个 tool 一行:"module::Type,"。
+///
+/// 每一行前面可加任意 `#[cfg(...)]` 属性做**编译期平台门控**——属性会同时
+/// 作用于 `pub mod` 声明和工厂里对应的分支,因此被门控掉的 tool 在该平台上
+/// 根本不会编入二进制,其 tab 也不会出现。示例:
+///
+/// ```ignore
+/// register_tools! {
+///     conn::ConnTool,
+///     #[cfg(target_os = "linux")]           // 仅 Linux 编入
+///     demo::DemoTool,
+///     #[cfg(any(target_os = "linux", target_os = "windows"))]
+///     ser::SerTool,
+/// }
+/// ```
+///
+/// `create` 返回 `(handle, cmds, available)`,其中 `available` 为**运行期**
+/// 门控结果(见 [`Tool::available`] 与 [`runtime_disabled`])。
 macro_rules! register_tools {
-    ($($mod:ident :: $ty:ident),* $(,)?) => {
-        $(pub mod $mod;)*
+    ($( $(#[$attr:meta])* $mod:ident :: $ty:ident ),* $(,)?) => {
+        $( $(#[$attr])* pub mod $mod; )*
 
         /// 根据 tool 名创建实例。由 Router 调用。
-        pub fn create(def: &'static ToolDef) -> Option<(ToolHandle, Arc<Vec<Cmd>>)> {
+        /// 返回 `(句柄, 命令树, 运行期是否可用)`。
+        pub fn create(def: &'static ToolDef) -> Option<(ToolHandle, Arc<Vec<Cmd>>, bool)> {
             $(
-                if def.name == stringify!($mod) {
-                    let tool = $mod::$ty::new(def);
-                    let cmds = Arc::new(build_cmds(tool.commands()));
-                    return Some((spawn(def.name.to_string(), tool, cmds.clone()), cmds));
+                $(#[$attr])*
+                {
+                    if def.name == stringify!($mod) {
+                        let tool = $mod::$ty::new(def);
+                        let available = tool.available() && !runtime_disabled(def.name);
+                        let cmds = Arc::new(build_cmds(tool.commands()));
+                        return Some((spawn(def.name.to_string(), tool, cmds.clone()), cmds, available));
+                    }
                 }
             )*
             None
@@ -241,5 +296,28 @@ macro_rules! register_tools {
 register_tools! {
     conn::ConnTool,
     demo::DemoTool,
+    // 编译期平台门控示例:echo server 仅在 Linux / Windows 上编入,
+    // 其它平台既不编译也不显示该 tab。linux-arm 与 win 两个目标都命中此 cfg。
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     ser::SerTool,
+}
+
+#[cfg(test)]
+mod gating_tests {
+    use super::name_in_list;
+
+    #[test]
+    fn disabled_list_matches_by_name() {
+        assert!(name_in_list("conn,ser", "conn"));
+        assert!(name_in_list("conn,ser", "ser"));
+        assert!(!name_in_list("conn,ser", "demo"));
+    }
+
+    #[test]
+    fn disabled_list_trims_and_ignores_case_and_blanks() {
+        assert!(name_in_list("  Conn , , SER ", "conn"));
+        assert!(name_in_list("  Conn , , SER ", "ser"));
+        assert!(!name_in_list("", "conn"));
+        assert!(!name_in_list(" , ,", "conn"));
+    }
 }
