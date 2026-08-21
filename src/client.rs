@@ -74,7 +74,7 @@ where
         while let Some(cmd) = cmd_rx.recv().await {
             let msg = match cmd {
                 Command::Input(text) => ClientMsg::Input { text },
-                Command::TagSwitch(name) => ClientMsg::TagSwitch { name },
+                Command::TagSwitch(name) => ClientMsg::TabSwitch { name },
                 Command::Permission(choice) => ClientMsg::Permission { choice: choice.into() },
             };
             let Ok(line) = serde_json::to_string(&msg) else { continue };

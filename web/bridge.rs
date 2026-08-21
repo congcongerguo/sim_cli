@@ -91,10 +91,11 @@ fn serve_events(request: tiny_http::Request, sessions: Sessions) -> io::Result<(
     let write_handle = sock.try_clone()?;
     sessions.lock().unwrap().insert(sid.clone(), write_handle);
 
-    // 声明全量、跟随底部的视口,后端便持续推 window。
+    // 声明"有界尾窗、跟随底部"的视口(不要全量 count:0,否则日志一多必卡)。
+    // 浏览器连上后会按自己的视口高度再发一次更精确的 view 覆盖它。
     {
         let mut w = sock.try_clone()?;
-        let _ = w.write_all(br#"{"type":"view","count":0,"follow":true}"#);
+        let _ = w.write_all(br#"{"type":"view","count":400,"follow":true}"#);
         let _ = w.write_all(b"\n");
     }
 

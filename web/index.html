@@ -97,7 +97,7 @@ function setStatus(text, cls) {
 // ── SSE:接收服务端帧 ─────────────────────────────────────────────────
 function connect() {
   const es = new EventSource("events");
-  es.addEventListener("session", (e) => { sid = e.data; });
+  es.addEventListener("session", (e) => { sid = e.data; requestWindow(); });
   es.onopen = () => setStatus("已连接", "on");
   es.onerror = () => setStatus("断开,重连中…", "off");
   es.onmessage = (e) => {
@@ -176,6 +176,27 @@ function flashError(text) {
   row.style.background = "var(--badbg)";
   logEl.appendChild(row); logEl.scrollTop = logEl.scrollHeight;
 }
+
+// ── 视口:声明本连接想看多少行(有界尾窗,跟随底部)───────────────────
+// 关键性能点:不要全量(count:0)。只取"一屏 + 少量翻页余量"的尾部,后端就只
+// 发这么多、浏览器就只渲染这么多 —— 传输与渲染都变成 O(一屏),与缓冲大小无关。
+const OVERSCAN = 200;          // 页内可本地上滚的余量(行)
+const MAX_WINDOW = 1000;       // 上限,防止极端视口
+function viewportLines() {
+  const lineH = 20;            // ≈ 1.5 * 13px,与 CSS 行高一致
+  const rows = Math.max(10, Math.ceil(logEl.clientHeight / lineH));
+  return Math.min(MAX_WINDOW, rows + OVERSCAN);
+}
+function requestWindow() {
+  if (!sid) return;
+  sendMsg({ type: "view", count: viewportLines(), follow: true });
+}
+// 窗口尺寸变化(resize / 字号 / 缩放)→ 重新声明视口(防抖)。
+let resizeTimer = null;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(requestWindow, 200);
+});
 
 // ── 发送:命令 → POST /command ────────────────────────────────────────
 function sendMsg(obj) {

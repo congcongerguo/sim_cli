@@ -28,7 +28,8 @@ pub enum ClientMsg {
     /// 用户输入的一行文本(命令或对话)。对应 [`crate::backend::Command::Input`]。
     Input { text: String },
     /// 切换到指定名称的 tab。对应 [`crate::backend::Command::TagSwitch`]。
-    TagSwitch { name: String },
+    /// 线上 JSON tag 为 `tab_switch`(直觉命名;内部 Command 仍叫 TagSwitch)。
+    TabSwitch { name: String },
     /// 权限弹窗选择。对应 [`crate::backend::Command::Permission`]。
     Permission { choice: Choice },
     /// 视口请求:声明本连接想看的窗口(每连接独立)。
