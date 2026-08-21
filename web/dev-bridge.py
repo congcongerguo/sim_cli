@@ -105,9 +105,10 @@ class Handler(BaseHTTPRequestHandler):
 
         # 首个事件:把 sid 交给浏览器(POST 时带回)。
         self._sse_raw(f"event: session\ndata: {sid}\n\n")
-        # 声明一个全量、跟随底部的视口,后端便持续推 window。
+        # 声明一个"有界尾窗、跟随底部"的视口(不要全量 count:0,否则日志一多必卡)。
+        # 浏览器连上后会用自己的视口高度再发一次更精确的 view 覆盖它。
         try:
-            sock.sendall(b'{"type":"view","count":0,"follow":true}\n')
+            sock.sendall(b'{"type":"view","count":400,"follow":true}\n')
         except OSError:
             pass
 

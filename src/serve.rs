@@ -194,7 +194,7 @@ where
                         }
                         let _ = cmd_tx.send(Command::Input(text)).await;
                     }
-                    ClientMsg::TagSwitch { name } => {
+                    ClientMsg::TabSwitch { name } => {
                         let _ = cmd_tx.send(Command::TagSwitch(name)).await;
                     }
                     ClientMsg::Permission { choice } => {
