@@ -78,6 +78,13 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_):  # 安静
         pass
 
+    def handle(self):
+        # 浏览器随时会断开 SSE/预连接;吞掉这类断连异常,别刷屏 traceback。
+        try:
+            super().handle()
+        except (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            pass
+
     # ── GET:首页 / SSE 事件流 ──────────────────────────────────────────
     def do_GET(self):
         path = urlparse(self.path).path
