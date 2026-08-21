@@ -271,3 +271,45 @@ Unix 路径。**Windows** 上不带 `--tcp` 会自动回退到默认 TCP 回环�
    debounce。
 5. **医疗器械网络安全项**（认证 / TLS / 审计 / 网络边界）随阶段四对外那层（Web 服务或 TCP+TLS）
    落地；当前 Unix socket 默认仅本机可达，未对外。
+
+---
+
+## 14. Web 前端（阶段四:桥接方案,sim_cli 体积零增长）
+
+### 选型结论
+
+- **只有 web 真正做到"客户端零安装"**(浏览器人人有);SSH、远端 TUI 都还要在客户端装/编工具。
+  故 web 为对外主形态,TUI 留给工程师本地调试。
+- 板子上**已有一个 tiny_http 的 web 服务(同板)**,故采用**桥接**:让它连 sim_cli 的 socket、
+  对浏览器提供 web。**sim_cli 本体不加任何 web 代码 → 固件体积零增长**;web 的 SOUP/体积落在
+  那个本来就付了 tiny_http 代价的服务里。
+- 浏览器 ⇄ 后端用 **SSE + POST**(纯 HTTP):tiny_http 原生支持,**不需要 SHA-1 / md-5 / WebSocket**。
+  数据流是"服务端推日志、客户端偶尔发命令",SSE+POST 比 WebSocket 更简、更贴合。
+
+### 架构
+
+```
+浏览器 ──GET / , GET /events(SSE) , POST /command──▶ tiny_http 桥 ──Unix socket(NDJSON)──▶ sim_cli --serve
+```
+- 每个浏览器 SSE 连接 = 一条独立 sim_cli 连接 = 一个独立 ViewSession(各自过滤/滚动);
+  命令按 `sid` 落到同一条连接上。
+- tab / 命令树 / 日志 / 状态全部由 sim_cli 后端下发(前端只是壳)。
+
+### 交付物(均在 `web/`,不进 sim_cli 编译)
+
+| 文件 | 用途 |
+|---|---|
+| `web/index.html` | 单文件浏览器前端(SSE + POST,渲染日志/tab)。零外部资源,满足严格 CSP。 |
+| `web/dev-bridge.py` | 纯标准库桥,可立刻本地验证整条链;语言无关参考。**已端到端验证**。 |
+| `web/bridge.rs` | 给 tiny_http 服务的 Rust 参考桥,拷入适配。 |
+| `web/README.md` | 运行与接入说明 + 医疗器械上生产前必补项(认证/TLS/审计/边界)。 |
+
+### 验证
+
+`sim_cli --serve` + `web/dev-bridge.py` + 浏览器(或 curl):`GET /` 返回页面;`/events` 收到
+`hello`/`shared`/`window`;`POST /command` 转发 `help`,输出经 SSE 流回。**整链通,sim_cli 未改一行。**
+
+### 上生产前(由桥这一层负责,不进 sim_cli)
+
+认证、TLS(HTTPS/`Server::https` 或前置反代)、审计(命令都过 `POST /command`,天然可记账)、
+网络边界(只绑内网/回环 + 反代)、SSE 会话回收。详见 `web/README.md`。
