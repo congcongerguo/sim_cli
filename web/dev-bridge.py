@@ -44,17 +44,31 @@ SESSIONS: dict[str, socket.socket] = {}
 LOCK = threading.Lock()
 
 
-def backend_connect() -> socket.socket:
-    """按环境变量连 sim_cli 后端:优先 TCP(SIM_CLI_TCP=host:port),否则 Unix socket。"""
+def backend_target() -> tuple[str, str]:
+    """决定连 sim_cli 后端的方式,返回 ("tcp", "host:port") 或 ("unix", path)。
+
+    - 显式设了 SIM_CLI_TCP → TCP;
+    - 否则本机无 AF_UNIX(如 Windows)→ 默认 TCP 127.0.0.1:7899
+      (与 `sim_cli --serve` 在 Windows 上自动回退的默认地址一致);
+    - 否则(Linux/macOS)→ Unix socket。
+    """
     tcp = os.environ.get("SIM_CLI_TCP")
+    if not tcp and not hasattr(socket, "AF_UNIX"):
+        tcp = "127.0.0.1:7899"
     if tcp:
-        host, _, port = tcp.rpartition(":")
+        return ("tcp", tcp)
+    return ("unix", os.environ.get("SIM_CLI_SOCK", "/tmp/sim_cli.sock"))
+
+
+def backend_connect() -> socket.socket:
+    kind, target = backend_target()
+    if kind == "tcp":
+        host, _, port = target.rpartition(":")
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.connect((host or "127.0.0.1", int(port)))
         return s
-    path = os.environ.get("SIM_CLI_SOCK", "/tmp/sim_cli.sock")
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    s.connect(path)
+    s.connect(target)
     return s
 
 
@@ -167,8 +181,10 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     host, _, port = BIND.rpartition(":")
     srv = ThreadingHTTPServer((host or "127.0.0.1", int(port)), Handler)
-    print(f"[web] http://{host or '127.0.0.1'}:{port}  → sim_cli "
-          f"({'TCP ' + os.environ['SIM_CLI_TCP'] if os.environ.get('SIM_CLI_TCP') else 'unix ' + os.environ.get('SIM_CLI_SOCK', '/tmp/sim_cli.sock')})")
+    kind, target = backend_target()
+    print(f"[web] http://{host or '127.0.0.1'}:{port}  → sim_cli ({kind} {target})")
+    if kind == "tcp":
+        print(f"[web] 提示:请确保后端在监听 TCP:  sim_cli --serve --tcp {target}")
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
