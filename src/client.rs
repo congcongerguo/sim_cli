@@ -18,21 +18,44 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::net::TcpStream;
+#[cfg(unix)]
 use tokio::net::UnixStream;
 use tokio::sync::{mpsc, watch};
 
 use crate::backend::{Command, Mode, ModalRequest, ViewState};
 use crate::protocol::{ClientMsg, CmdDto, ServerMsg, Shared, ViewReq, Window};
+use crate::serve::Endpoint;
 use crate::tool::{Cmd, ToolInfo, ToolState};
 
-/// 连接远端后端并运行本地 TUI。
-pub async fn run(sock_path: String) -> Result<()> {
-    let stream = UnixStream::connect(&sock_path)
-        .await
-        .with_context(|| format!("connect {sock_path}"))?;
-    let (read_half, mut write_half) = stream.into_split();
+/// 连接远端后端并运行本地 TUI。传输由 [`Endpoint`] 决定(Unix / TCP)。
+pub async fn run(endpoint: Endpoint) -> Result<()> {
+    match endpoint {
+        #[cfg(unix)]
+        Endpoint::Unix(path) => {
+            let stream = UnixStream::connect(&path)
+                .await
+                .with_context(|| format!("connect {path}"))?;
+            let (r, w) = stream.into_split();
+            run_with(r, w).await
+        }
+        Endpoint::Tcp(addr) => {
+            let stream = TcpStream::connect(&addr)
+                .await
+                .with_context(|| format!("connect {addr}"))?;
+            let (r, w) = stream.into_split();
+            run_with(r, w).await
+        }
+    }
+}
 
+/// 传输无关的桥接 + 前端运行。
+async fn run_with<R, W>(read_half: R, mut write_half: W) -> Result<()>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
+{
     // 前端消费的 ViewState(watch)与产出的 Command(mpsc)。
     let (view_tx, view_rx) = watch::channel(ViewState::initial());
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<Command>(64);

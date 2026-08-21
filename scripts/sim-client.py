@@ -6,12 +6,15 @@
 当作 `input` 命令发过去。
 
 用法:
-    # 终端 A:起无头后端
+    # 终端 A:起无头后端(Unix socket,unix 平台)
     cargo run --features serve -- --serve
+    # 或 TCP(跨平台,Windows 用这个):
+    cargo run --features serve -- --serve --tcp 127.0.0.1:7899
 
     # 终端 B:连上它
-    python3 scripts/sim-client.py                 # 用默认 socket
-    python3 scripts/sim-client.py /tmp/sim_cli.sock
+    python3 scripts/sim-client.py                    # Unix,用默认 socket
+    python3 scripts/sim-client.py /tmp/sim_cli.sock  # Unix,指定 socket 路径
+    python3 scripts/sim-client.py 127.0.0.1:7899     # TCP(含 ':' 即按 host:port)
 
 在终端 B 里键入(回车发送):
     help                 → 发一条命令,输出会随 window 帧回来
@@ -84,13 +87,30 @@ def render(msg: dict) -> None:
         print("[?]", msg)
 
 
+def connect(target: str) -> socket.socket:
+    """按目标形态选择传输:含 ':' → TCP host:port;否则 → Unix socket 路径。"""
+    if ":" in target:
+        host, _, port = target.rpartition(":")
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.connect((host or "127.0.0.1", int(port)))
+    else:
+        # AF_UNIX 在部分平台(如老 Windows)不可用。
+        if not hasattr(socket, "AF_UNIX"):
+            raise SystemExit(
+                "this platform has no Unix sockets; connect over TCP, e.g. "
+                "python3 scripts/sim-client.py 127.0.0.1:7899"
+            )
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.connect(target)
+    return sock
+
+
 def main() -> None:
-    path = sys.argv[1] if len(sys.argv) > 1 else os.environ.get(
-        "SIM_CLI_SOCK", "/tmp/sim_cli.sock"
-    )
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.connect(path)
-    print(f"[connected] {path}")
+    target = sys.argv[1] if len(sys.argv) > 1 else os.environ.get(
+        "SIM_CLI_TCP"
+    ) or os.environ.get("SIM_CLI_SOCK", "/tmp/sim_cli.sock")
+    sock = connect(target)
+    print(f"[connected] {target}")
 
     threading.Thread(target=reader, args=(sock,), daemon=True).start()
 

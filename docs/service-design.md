@@ -236,17 +236,25 @@ Router 里加 `HashMap<ConnId, ViewSession>`。`scroll.rs` 的"跟随底部/滚�
 
 ### 运行方式
 
+两种传输,协议一致(见 `Endpoint`):
+- **Unix socket**(unix 平台默认):仅本机、零网络暴露,推荐。
+- **TCP**(跨平台;**Windows 只能用它**,因 tokio 的 Unix socket 不支持 Windows):
+  对外时须前置 TLS。
+
 ```bash
-# 起无头后端（daemon）
-cargo run --features serve --bin sim_cli -- --serve            # 默认 socket /tmp/sim_cli.sock
+# —— Unix socket(Linux / macOS)——
+cargo run --features serve --bin sim_cli -- --serve            # 默认 /tmp/sim_cli.sock
+cargo run --features serve --bin sim_cli -- --connect          # 远端 TUI(需真终端)
+python3 scripts/sim-client.py                                  # 脚本客户端
 
-# 远端 TUI 连上它（需真终端）
-cargo run --features serve --bin sim_cli -- --connect          # 复用默认 socket
-
-# 脚本/跨语言客户端
-python3 scripts/sim-client.py                                  # 连默认 socket
+# —— TCP(任意平台,含 Windows)——
+cargo run --features serve --bin sim_cli -- --serve --tcp 127.0.0.1:7899
+cargo run --features serve --bin sim_cli -- --connect 127.0.0.1:7899
+python3 scripts/sim-client.py 127.0.0.1:7899
 ```
-socket 路径可用 `--socket <path>` 或环境变量 `SIM_CLI_SOCK` 覆盖。
+覆盖端点:`--socket <path>`(Unix)、`--tcp <host:port>`(TCP);或环境变量
+`SIM_CLI_SOCK` / `SIM_CLI_TCP`。`--connect` 的位置参数含 `:` 视为 TCP,否则视为
+Unix 路径。**Windows** 上不带 `--tcp` 会自动回退到默认 TCP 回环并给出提示。
 
 ### 本实现的已知边界（后续可迭代）
 
