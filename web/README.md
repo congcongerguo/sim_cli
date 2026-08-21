@@ -40,6 +40,22 @@ python3 web/dev-bridge.py          # 监听 127.0.0.1:8080
 后端用 TCP 时:`SIM_CLI_TCP=127.0.0.1:7899 python3 web/dev-bridge.py`。
 换监听地址:`SIM_CLI_WEB_BIND=0.0.0.0:8080`。
 
+### Windows
+
+Windows 无 Unix socket(Python 也没有 `AF_UNIX`),**必须走 TCP**。后端和桥都会
+自动默认 TCP `127.0.0.1:7899`,直接跑即可:
+
+```bat
+:: 终端 A(sim_cli 在 Windows 上无 --tcp 也会自动回退到 127.0.0.1:7899)
+cargo run --features serve --bin sim_cli -- --serve --tcp 127.0.0.1:7899
+
+:: 终端 B(桥在 Windows 上自动用 TCP 127.0.0.1:7899)
+python web\dev-bridge.py
+
+:: 浏览器打开 http://127.0.0.1:8080
+```
+换地址:后端 `--tcp <host:port>`,桥 `set SIM_CLI_TCP=<host:port>`。
+
 ## 接进你的 tiny_http 服务(生产)
 
 1. 你的 `Cargo.toml` 里有 `tiny_http = "0.12"` 即可(**SSE 不需要 md-5 / sha1**)。
