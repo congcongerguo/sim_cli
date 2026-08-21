@@ -25,55 +25,105 @@ use tokio::sync::{mpsc, watch};
 
 use crate::backend::{Command, ViewState};
 
+/// 端点参数(平台无关的原始输入)。`--socket` 走 Unix socket(仅 unix),
+/// `--tcp`(或形如 `host:port` 的目标)走 TCP(跨平台)。
+#[derive(Default)]
+#[cfg_attr(not(feature = "serve"), allow(dead_code))]
+struct EndpointSpec {
+    socket: Option<String>,
+    tcp: Option<String>,
+}
+
 /// 启动模式,由命令行参数决定。
 enum RunMode {
     /// 本地单进程 TUI(默认,与历史行为一致)。
     Local,
-    /// 无头后端 daemon(`--serve`),监听 socket。需 `serve` feature。
-    /// (无 `serve` feature 时字段不被读取,仅用于给出友好报错。)
+    /// 无头后端 daemon(`--serve`)。需 `serve` feature。
     #[cfg_attr(not(feature = "serve"), allow(dead_code))]
-    Serve(String),
-    /// 远端 TUI 客户端(`--connect <sock>`),连上无头后端。需 `serve` feature。
+    Serve(EndpointSpec),
+    /// 远端 TUI 客户端(`--connect`),连上无头后端。需 `serve` feature。
     #[cfg_attr(not(feature = "serve"), allow(dead_code))]
-    Connect(String),
+    Connect(EndpointSpec),
 }
 
 /// 极简参数解析(不引入 clap,保持体积)。
 ///
-/// - `sim_cli`                     本地 TUI
-/// - `sim_cli --serve [--socket P]` 无头后端(默认 socket 见 `default_sock_path`)
-/// - `sim_cli --connect [P]`        远端 TUI(P 缺省用默认 socket)
+/// - `sim_cli`                      本地 TUI
+/// - `sim_cli --serve [--socket P | --tcp A]`   无头后端
+/// - `sim_cli --connect [目标] [--socket P | --tcp A]`  远端 TUI
+///
+/// 目标 / `--socket`:含 `:` 视为 TCP `host:port`,否则视为 Unix socket 路径。
 fn parse_mode() -> RunMode {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let mut mode = RunMode::Local;
-    let mut socket: Option<String> = None;
+    let mut serve = false;
+    let mut connect = false;
+    let mut spec = EndpointSpec::default();
     let mut i = 0;
+    // 目标既可能来自 --connect 的位置参数,也可能来自 --socket/--tcp。
+    let classify = |spec: &mut EndpointSpec, t: String| {
+        if t.contains(':') {
+            spec.tcp = Some(t);
+        } else {
+            spec.socket = Some(t);
+        }
+    };
     while i < args.len() {
         match args[i].as_str() {
-            "--serve" => mode = RunMode::Serve(String::new()),
+            "--serve" => serve = true,
             "--connect" => {
-                // 可选地紧跟一个路径参数。
-                let path = args.get(i + 1).filter(|a| !a.starts_with("--")).cloned();
-                if let Some(p) = path {
-                    mode = RunMode::Connect(p);
+                connect = true;
+                if let Some(t) = args.get(i + 1).filter(|a| !a.starts_with("--")).cloned() {
+                    classify(&mut spec, t);
                     i += 1;
-                } else {
-                    mode = RunMode::Connect(String::new());
                 }
             }
             "--socket" => {
-                socket = args.get(i + 1).cloned();
-                i += 1;
+                if let Some(p) = args.get(i + 1).cloned() {
+                    spec.socket = Some(p);
+                    i += 1;
+                }
+            }
+            "--tcp" => {
+                if let Some(a) = args.get(i + 1).cloned() {
+                    spec.tcp = Some(a);
+                    i += 1;
+                }
             }
             _ => {}
         }
         i += 1;
     }
-    // 把 --socket 合并进 serve/connect 的路径。
-    match mode {
-        RunMode::Serve(_) => RunMode::Serve(socket.unwrap_or_default()),
-        RunMode::Connect(p) if p.is_empty() => RunMode::Connect(socket.unwrap_or_default()),
-        other => other,
+    if serve {
+        RunMode::Serve(spec)
+    } else if connect {
+        RunMode::Connect(spec)
+    } else {
+        RunMode::Local
+    }
+}
+
+/// 把原始端点参数解析成传输端点。`--tcp`/`host:port` 优先;否则 unix 用 socket
+/// 路径,非 unix 平台(如 Windows)回退到默认 TCP 回环并给出提示。
+#[cfg(feature = "serve")]
+fn resolve_endpoint(spec: EndpointSpec) -> serve::Endpoint {
+    if let Some(addr) = spec.tcp {
+        return serve::Endpoint::Tcp(addr);
+    }
+    #[cfg(unix)]
+    {
+        let path = spec.socket.unwrap_or_else(serve::default_sock_path);
+        serve::Endpoint::Unix(path)
+    }
+    #[cfg(not(unix))]
+    {
+        // 非 unix(如 Windows)无 Unix socket:回退到 TCP。若用户用 --socket 传了
+        // host:port 也当 TCP 地址用,否则用默认回环地址。
+        let addr = spec.socket.unwrap_or_else(serve::default_tcp_addr);
+        eprintln!(
+            "note: Unix sockets are unavailable on this platform; using TCP {addr}. \
+             Pass --tcp <host:port> to change it."
+        );
+        serve::Endpoint::Tcp(addr)
     }
 }
 
@@ -82,15 +132,9 @@ async fn main() -> Result<()> {
     match parse_mode() {
         RunMode::Local => run_local().await,
         #[cfg(feature = "serve")]
-        RunMode::Serve(p) => {
-            let path = if p.is_empty() { serve::default_sock_path() } else { p };
-            serve::run(path).await
-        }
+        RunMode::Serve(spec) => serve::run(resolve_endpoint(spec)).await,
         #[cfg(feature = "serve")]
-        RunMode::Connect(p) => {
-            let path = if p.is_empty() { serve::default_sock_path() } else { p };
-            client::run(path).await
-        }
+        RunMode::Connect(spec) => client::run(resolve_endpoint(spec)).await,
         #[cfg(not(feature = "serve"))]
         RunMode::Serve(_) | RunMode::Connect(_) => {
             anyhow::bail!(

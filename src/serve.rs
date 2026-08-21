@@ -16,8 +16,10 @@
 //! 仅在 `serve` feature 且 Unix 平台下编入。
 
 use anyhow::Result;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{UnixListener, UnixStream};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::net::TcpListener;
+#[cfg(unix)]
+use tokio::net::UnixListener;
 use tokio::sync::{mpsc, watch};
 
 use crate::backend::{Command, Mode, ViewState};
@@ -29,49 +31,111 @@ use crate::protocol::{
     ViewReq, Window,
 };
 
-/// 默认 socket 路径。可用 `SIM_CLI_SOCK` 覆盖。
+/// 默认 Unix socket 路径。可用 `SIM_CLI_SOCK` 覆盖。
+#[cfg(unix)]
 pub fn default_sock_path() -> String {
     std::env::var("SIM_CLI_SOCK").unwrap_or_else(|_| "/tmp/sim_cli.sock".to_string())
 }
 
-/// 启动无头服务:创建后端,监听 socket,为每个连接派生一个任务。
-pub async fn run(sock_path: String) -> Result<()> {
+/// 默认 TCP 监听地址(仅回环,不对外)。可用 `SIM_CLI_TCP` 覆盖。
+/// (unix 平台默认走 Unix socket,此函数仅在非 unix 回退时用到。)
+#[cfg_attr(unix, allow(dead_code))]
+pub fn default_tcp_addr() -> String {
+    std::env::var("SIM_CLI_TCP").unwrap_or_else(|_| "127.0.0.1:7879".to_string())
+}
+
+/// 服务/连接端点。Unix socket 仅本机、零网络暴露(推荐,unix 平台);TCP
+/// 跨平台(Windows 只能用它),对外时须前置 TLS。协议与传输解耦,换端点不改协议。
+#[derive(Clone, Debug)]
+pub enum Endpoint {
+    /// Unix domain socket 路径(仅 unix 平台)。
+    #[cfg(unix)]
+    Unix(String),
+    /// TCP 地址,如 `127.0.0.1:7879`。
+    Tcp(String),
+}
+
+impl Endpoint {
+    pub fn describe(&self) -> String {
+        match self {
+            #[cfg(unix)]
+            Endpoint::Unix(p) => format!("unix:{p}"),
+            Endpoint::Tcp(a) => format!("tcp:{a}"),
+        }
+    }
+}
+
+/// 启动无头服务:创建后端,监听端点,为每个连接派生一个任务。
+pub async fn run(endpoint: Endpoint) -> Result<()> {
     // 复用现有后端:Command 进 / ViewState 出。
     let (cmd_tx, cmd_rx) = mpsc::channel::<Command>(64);
     let (view_tx, view_rx) = watch::channel(ViewState::initial());
     tokio::spawn(crate::backend::run(cmd_rx, view_tx));
 
-    // 陈旧 socket 文件会导致 bind 失败;先清掉(仅当它确实是个 socket)。
-    let _ = std::fs::remove_file(&sock_path);
-    let listener = UnixListener::bind(&sock_path)?;
-    eprintln!("sim_cli serving on {sock_path} (protocol v{PROTOCOL_VERSION})");
+    eprintln!("sim_cli serving on {} (protocol v{PROTOCOL_VERSION})", endpoint.describe());
 
-    loop {
-        match listener.accept().await {
-            Ok((stream, _addr)) => {
-                let cmd_tx = cmd_tx.clone();
-                let view_rx = view_rx.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = handle_conn(stream, cmd_tx, view_rx).await {
-                        eprintln!("sim_cli: connection ended: {e}");
+    match endpoint {
+        #[cfg(unix)]
+        Endpoint::Unix(path) => {
+            // 陈旧 socket 文件会导致 bind 失败;先清掉。
+            let _ = std::fs::remove_file(&path);
+            let listener = UnixListener::bind(&path)?;
+            loop {
+                match listener.accept().await {
+                    Ok((stream, _addr)) => {
+                        let (r, w) = stream.into_split();
+                        spawn_conn(r, w, &cmd_tx, &view_rx);
                     }
-                });
+                    Err(e) => eprintln!("sim_cli: accept error: {e}"),
+                }
             }
-            Err(e) => {
-                eprintln!("sim_cli: accept error: {e}");
+        }
+        Endpoint::Tcp(addr) => {
+            let listener = TcpListener::bind(&addr).await?;
+            loop {
+                match listener.accept().await {
+                    Ok((stream, _addr)) => {
+                        let (r, w) = stream.into_split();
+                        spawn_conn(r, w, &cmd_tx, &view_rx);
+                    }
+                    Err(e) => eprintln!("sim_cli: accept error: {e}"),
+                }
             }
         }
     }
 }
 
+/// 为一条连接(已拆分的读写半)派生处理任务。传输无关。
+fn spawn_conn<R, W>(
+    read_half: R,
+    write_half: W,
+    cmd_tx: &mpsc::Sender<Command>,
+    view_rx: &watch::Receiver<ViewState>,
+) where
+    R: AsyncRead + Unpin + Send + 'static,
+    W: AsyncWrite + Unpin + Send + 'static,
+{
+    let cmd_tx = cmd_tx.clone();
+    let view_rx = view_rx.clone();
+    tokio::spawn(async move {
+        if let Err(e) = handle_conn(read_half, write_half, cmd_tx, view_rx).await {
+            eprintln!("sim_cli: connection ended: {e}");
+        }
+    });
+}
+
 /// 单连接处理:读客户端命令、按本连接的 [`ViewSession`] 推送共享状态与视口。
-async fn handle_conn(
-    stream: UnixStream,
+/// 传输无关:接受已拆分的读写半(Unix / TCP 皆可)。
+async fn handle_conn<R, W>(
+    read_half: R,
+    mut write_half: W,
     cmd_tx: mpsc::Sender<Command>,
     mut view_rx: watch::Receiver<ViewState>,
-) -> Result<()> {
-    let (read_half, mut write_half) = stream.into_split();
-
+) -> Result<()>
+where
+    R: AsyncRead + Unpin + Send + 'static,
+    W: AsyncWrite + Unpin + Send,
+{
     // 读端独立任务:解析 NDJSON → ClientMsg,投递到本连接主循环。
     let (client_tx, mut client_rx) = mpsc::channel::<ClientMsg>(64);
     tokio::spawn(async move {
@@ -567,7 +631,8 @@ mod tests {
         let (view_tx, view_rx) = watch::channel(ViewState::initial());
         tokio::spawn(crate::backend::run(cmd_rx, view_tx));
         tokio::spawn(async move {
-            let _ = handle_conn(server, cmd_tx, view_rx).await;
+            let (r, w) = server.into_split();
+            let _ = handle_conn(r, w, cmd_tx, view_rx).await;
         });
 
         let (r, mut w) = client.into_split();
