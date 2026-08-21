@@ -7,6 +7,9 @@ edition = "2024"
 default = ["zmq"]
 zmq = ["dep:zeromq", "dep:prost"]
 mock-llm = []
+# Headless service + remote client (前后端分离). Adds `--serve` / `--connect`
+# 与线协议(NDJSON over Unix socket)。默认固件构建不含,保住嵌入式体积。
+serve = ["dep:serde"]
 
 [dependencies]
 ratatui = "0.29"
@@ -24,6 +27,9 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 regex-lite = "0.1"
 zeromq = { version = "0.6", default-features = false, features = ["tokio-runtime", "tcp-transport"], optional = true }
 prost = { version = "0.13", optional = true }
+# Wire-protocol (de)serialization for the `serve` feature. serde_json is already
+# a hard dependency; only the derive-capable serde core is optional/gated here.
+serde = { version = "1", features = ["derive"], optional = true }
 
 [build-dependencies]
 prost-build = { version = "0.13" }

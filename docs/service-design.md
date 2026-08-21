@@ -208,3 +208,58 @@ Router 里加 `HashMap<ConnId, ViewSession>`。`scroll.rs` 的"跟随底部/滚�
 - 视口 resize：行数变化后窗口正确重算。
 - 非法命令 / 非法过滤表达式：回 `error` 帧，服务不崩。
 - 客户端断开重连：重发 hello + 共享状态 + 当前窗口。
+
+---
+
+## 13. 实现状态（阶段一~三已落地，阶段四 Web 未做）
+
+全部新增代码在 `serve` feature 门控下，**默认固件构建（不带 `serve`）完全不变**。
+默认 `zmq` feature 需要 `protoc`；开发校验用 `--no-default-features --features serve`。
+
+### 已实现
+
+- **协议** `src/protocol.rs`：NDJSON 线协议 + owned DTO（`ClientMsg` / `ServerMsg`：
+  `Hello` / `Shared` / `Window` / `Error`）与内部类型互转。`ViewState` 已拆为
+  **共享状态 `Shared`（广播）** + **视口内容 `Window`（每连接）**。
+- **无头后端** `src/serve.rs`：`sim_cli --serve` 起 Unix socket daemon，复用现有
+  `backend::run`（Tool / 路由 / 后端逻辑零改动）。每连接一个 `ViewSession`，
+  含 include/exclude 过滤、grep、按范围取窗（`start + count`，`count==0` 为全量模式）。
+  过滤复用 `filter.rs`，grep 复用 `msg_log::scan`（搜**服务端**归档）。窗口/共享帧
+  按 JSON 去重，抑制空闲期重复推送。
+- **远端 TUI** `src/client.rs`：`sim_cli --connect [sock]` 连上后端，**复用现有
+  `Frontend` 零改动**，把 socket 帧桥接成前端消费的 `ViewState`。
+- **入口** `src/main.rs`：`--serve` / `--connect` / 默认本地 TUI 三态分派;
+  无 `serve` feature 时给出友好报错。
+- **脚本客户端** `scripts/sim-client.py`：跨语言示例(连 socket、按行读写 JSON)。
+- **测试**：`protocol` 往返、`ViewSession` 过滤/窗口/grep 单测、端到端 socket 闭环
+  (`UnixStream::pair` + 真后端,握手→发命令→收窗口)。`--features serve` 下 99 项全绿。
+
+### 运行方式
+
+```bash
+# 起无头后端（daemon）
+cargo run --features serve --bin sim_cli -- --serve            # 默认 socket /tmp/sim_cli.sock
+
+# 远端 TUI 连上它（需真终端）
+cargo run --features serve --bin sim_cli -- --connect          # 复用默认 socket
+
+# 脚本/跨语言客户端
+python3 scripts/sim-client.py                                  # 连默认 socket
+```
+socket 路径可用 `--socket <path>` 或环境变量 `SIM_CLI_SOCK` 覆盖。
+
+### 本实现的已知边界（后续可迭代）
+
+1. **共享会话语义**：当前**活跃 tab 与权限弹窗为所有连接共享**（一个连接切 tab，
+   大家一起切）；**过滤 / exclude / grep / 滚动为每连接独立**。多连接“各自独立 tab”
+   属未来增强（需把 Router 的单一 `active` 改为每连接）。
+2. **远端 TUI 用全量模式**（`count==0`，收当前 tab 全部消息，本地做滚动/过滤 —— 复用
+   久经测试的前端逻辑，零风险）。**按范围取窗（分页）** 已实现并经单测/脚本客户端验证，
+   主要供 Web / 瘦客户端（阶段四）使用。
+3. **远端 TUI 的 `grep`** 仍走前端本地 `msg_log::scan`（搜的是客户端本机归档，通常为空）；
+   **服务端 grep 已实现**，脚本 / Web 客户端可经 `{"type":"grep",...}` 直接使用。把远端
+   TUI 的 grep 接到 `ClientMsg::Grep` 需前端一个小钩子，留待后续。
+4. **空闲推送**约 10Hz（后端 watch 每 100ms 一帧），已按 JSON 去重；如需进一步降噪可加
+   debounce。
+5. **医疗器械网络安全项**（认证 / TLS / 审计 / 网络边界）随阶段四对外那层（Web 服务或 TCP+TLS）
+   落地；当前 Unix socket 默认仅本机可达，未对外。
