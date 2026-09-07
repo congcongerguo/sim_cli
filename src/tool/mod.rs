@@ -179,6 +179,8 @@ pub fn spawn(name: String, tool: impl Tool, cmds: Arc<Vec<Cmd>>) -> ToolHandle {
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         // 即使无消息产生,也周期性刷新状态快照(某些 tool 状态变化不发消息)。
         let mut snap = tokio::time::interval(Duration::from_millis(push_ms));
+        let tick_warn_threshold = Duration::from_millis(tick_ms).saturating_mul(10);
+        let mut last_tick: Option<tokio::time::Instant> = None;
 
         loop {
             tokio::select! {
@@ -202,6 +204,22 @@ pub fn spawn(name: String, tool: impl Tool, cmds: Arc<Vec<Cmd>>) -> ToolHandle {
                     None => break,
                 },
                 _ = tick.tick() => {
+                    // 使用实际执行时刻,首个 tick 只建立基准。
+                    let now = tokio::time::Instant::now();
+                    let elapsed = last_tick.replace(now).map(|last| now.duration_since(last));
+                    if let Some(elapsed) = elapsed {
+                        if elapsed > tick_warn_threshold {
+                            emit(&evt_tx, vec![msg(
+                                &format!(
+                                    "tick interval exceeded 10x period: period={} ms, actual={:.3} ms, threshold={:.3} ms",
+                                    tick_ms,
+                                    elapsed.as_secs_f64() * 1000.0,
+                                    tick_warn_threshold.as_secs_f64() * 1000.0,
+                                ),
+                                LogLevel::Warn,
+                            )]);
+                        }
+                    }
                     let msgs = tool.tick();
                     if !msgs.is_empty() { emit(&evt_tx, msgs); }
                 }
