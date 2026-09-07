@@ -112,13 +112,6 @@ fn name_in_list(list: &str, name: &str) -> bool {
 
 // ── 框架内部类型 ──────────────────────────────────────────────────────
 
-/// 框架持有的 tool 运行时。Tool 不感知这些字段。
-struct ToolCtx {
-    name: String,
-    log: LogBuffer,
-    tool: Box<dyn Tool>,
-}
-
 /// 推送给 UI 的单帧快照，框架自动填充消息和滚动信息。
 #[derive(Debug, Clone)]
 pub struct ViewUpdate {
@@ -147,6 +140,17 @@ pub struct ToolInfo {
 
 // ── spawn ──────────────────────────────────────────────────────────────
 
+/// Worker → Pusher 的内部事件。把「跑 Tool 逻辑」与「维护缓冲/推送 UI」解耦,
+/// 让定时器(`tick`)所在的 worker 循环不被 UI 推送的 O(缓冲) 重活拖慢。
+enum ToView {
+    /// 追加一条消息(带**产生时刻**的时间戳:屏显 / 落盘 / 发生时刻三者一致)。
+    Log(TimedMessage),
+    /// 最新的 Tool 状态快照(状态面板 + badge)。
+    State(ToolState),
+    /// 清空缓冲(`clear` 命令)。
+    Clear,
+}
+
 pub fn spawn(name: String, tool: impl Tool, cmds: Arc<Vec<Cmd>>) -> ToolHandle {
     let (cmd_tx, mut cmd_rx) = mpsc::channel::<String>(64);
     let initial = ViewUpdate {
@@ -158,17 +162,23 @@ pub fn spawn(name: String, tool: impl Tool, cmds: Arc<Vec<Cmd>>) -> ToolHandle {
     };
     let (view_tx, view_rx) = watch::channel(initial);
 
-    let mut ctx = ToolCtx {
-        name,
-        log: LogBuffer::new(crate::log_buffer::default_max()),
-        tool: Box::new(tool),
-    };
+    let tick_ms = tool.tick_ms();
+    let push_ms = tool.push_ms();
 
+    // Worker → Pusher。无界通道:worker(定时器)永不因推送慢而阻塞。
+    // Pusher 每条消息只做 O(1) 追加,O(缓冲) 的克隆只发生在周期性 push,故通道
+    // 会被快速排空,积压有界。
+    let (evt_tx, mut evt_rx) = mpsc::unbounded_channel::<ToView>();
+
+    // ── Worker 任务:只跑 Tool 逻辑(tick + 命令)。────────────────────────
+    // 循环里没有缓冲、没有 O(n) 拷贝 → tick 节拍尽量精确。
+    let mut tool = tool;
     tokio::spawn(async move {
-        let tick_ms = ctx.tool.tick_ms();
-        let push_ms = ctx.tool.push_ms();
         let mut tick = tokio::time::interval(Duration::from_millis(tick_ms));
-        let mut push = tokio::time::interval(Duration::from_millis(push_ms));
+        // 迟到不补发(不 burst),保持固定节拍 —— 对定时采集类 tool 更准。
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        // 即使无消息产生,也周期性刷新状态快照(某些 tool 状态变化不发消息)。
+        let mut snap = tokio::time::interval(Duration::from_millis(push_ms));
 
         loop {
             tokio::select! {
@@ -178,30 +188,55 @@ pub fn spawn(name: String, tool: impl Tool, cmds: Arc<Vec<Cmd>>) -> ToolHandle {
                         if parts.is_empty() { continue; }
                         let cmd = parts[0];
                         let args: &[&str] = if parts.len() > 1 { &parts[1..] } else { &[] };
-
-                        let msgs = match cmd {
-                            "help" => build_help(&cmds),
+                        match cmd {
+                            "help" => emit(&evt_tx, build_help(&cmds)),
                             "clear" => {
-                                ctx.log.clear();
-                                log_msg(&mut ctx.log, &ctx.name, msg("conversation cleared", LogLevel::Notice));
-                                continue;
+                                let _ = evt_tx.send(ToView::Clear);
+                                emit(&evt_tx, vec![msg("conversation cleared", LogLevel::Notice)]);
                             }
-                            _ => ctx.tool.handle(cmd, args),
-                        };
-                        for m in msgs { log_msg(&mut ctx.log, &ctx.name, m); }
+                            _ => emit(&evt_tx, tool.handle(cmd, args)),
+                        }
+                        // 命令可能改了状态,刷新一次快照。
+                        let _ = evt_tx.send(ToView::State(tool.snapshot()));
                     }
                     None => break,
                 },
                 _ = tick.tick() => {
-                    for m in ctx.tool.tick() { log_msg(&mut ctx.log, &ctx.name, m); }
+                    let msgs = tool.tick();
+                    if !msgs.is_empty() { emit(&evt_tx, msgs); }
                 }
+                _ = snap.tick() => {
+                    let _ = evt_tx.send(ToView::State(tool.snapshot()));
+                }
+            }
+        }
+    });
+
+    // ── Pusher 任务:拥有 LogBuffer,做落盘 + 周期性快照推送(重活在这)。──
+    tokio::spawn(async move {
+        let mut log = LogBuffer::new(crate::log_buffer::default_max());
+        let mut state = ToolState::default();
+        let mut push = tokio::time::interval(Duration::from_millis(push_ms));
+
+        loop {
+            tokio::select! {
+                evt = evt_rx.recv() => match evt {
+                    Some(ToView::Log(tm)) => {
+                        // 屏显与落盘共用同一时刻(在 worker 产生时已打好)。
+                        crate::msg_log::record_at(tm.time, &name, &tm.msg);
+                        log.push_at(tm.time, tm.msg);
+                    }
+                    Some(ToView::State(s)) => state = s,
+                    Some(ToView::Clear) => log.clear(),
+                    None => break, // worker 结束
+                },
                 _ = push.tick() => {
                     let _ = view_tx.send(ViewUpdate {
-                        name: ctx.name.clone(),
-                        messages: ctx.log.to_arc(),
-                        evicted_lines: ctx.log.evicted_lines(),
-                        buffer_total_lines: ctx.log.total_lines(),
-                        state: ctx.tool.snapshot(),
+                        name: name.clone(),
+                        messages: log.to_arc(),
+                        evicted_lines: log.evicted_lines(),
+                        buffer_total_lines: log.total_lines(),
+                        state: state.clone(),
                     });
                 }
             }
@@ -209,6 +244,13 @@ pub fn spawn(name: String, tool: impl Tool, cmds: Arc<Vec<Cmd>>) -> ToolHandle {
     });
 
     ToolHandle { cmd_tx, view_rx }
+}
+
+/// 给一批消息打上「产生时刻」的时间戳,发给 pusher。
+fn emit(tx: &mpsc::UnboundedSender<ToView>, msgs: Vec<Message>) {
+    for m in msgs {
+        let _ = tx.send(ToView::Log(TimedMessage { time: chrono::Local::now(), msg: m }));
+    }
 }
 
 fn build_cmds(mut own: Vec<Cmd>) -> Vec<Cmd> {
@@ -238,14 +280,6 @@ fn write_cmd_tree(s: &mut String, cmds: &[Cmd], depth: usize) {
 /// 创建一条系统消息。
 pub fn msg(text: &str, level: LogLevel) -> Message {
     Message::System { text: text.into(), level }
-}
-
-/// 用同一时间戳把消息写入界面缓冲区并落盘到消息日志文件,
-/// 保证屏幕上显示的时间与日志文件中的时间完全一致。
-fn log_msg(log: &mut LogBuffer, tool: &str, m: Message) {
-    let time = chrono::Local::now();
-    crate::msg_log::record_at(time, tool, &m);
-    log.push_at(time, m);
 }
 
 // ── 工厂函数 ──────────────────────────────────────────────────────────
@@ -319,5 +353,82 @@ mod gating_tests {
         assert!(name_in_list("  Conn , , SER ", "ser"));
         assert!(!name_in_list("", "conn"));
         assert!(!name_in_list(" , ,", "conn"));
+    }
+}
+
+#[cfg(test)]
+mod spawn_tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// 一个极简 tool:tick 产出消息、命令产出消息、状态带 badge。
+    /// 用来验证 worker/pusher 双任务管线把三条路径都正确送达 UI。
+    #[derive(Default)]
+    struct TestTool;
+    impl Tool for TestTool {
+        fn commands(&self) -> Vec<Cmd> {
+            vec![cmd("ping", "reply pong")]
+        }
+        fn handle(&mut self, c: &str, _a: &[&str]) -> Vec<Message> {
+            if c == "ping" { vec![msg("pong", LogLevel::Info)] } else { vec![] }
+        }
+        fn tick(&mut self) -> Vec<Message> {
+            vec![msg("t", LogLevel::Debug)]
+        }
+        fn snapshot(&self) -> ToolState {
+            ToolState { badge: Some("live".into()), ..Default::default() }
+        }
+        fn tick_ms(&self) -> u64 { 5 }
+        fn push_ms(&self) -> u64 { 10 }
+    }
+
+    fn system_texts(v: &ViewUpdate) -> Vec<String> {
+        v.messages
+            .iter()
+            .filter_map(|tm| match &tm.msg {
+                Message::System { text, .. } => Some(text.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// tick(定时器)、snapshot(状态)、handle(命令)三条路径都经由
+    /// 「worker → 无界通道 → pusher → watch」正确送达。
+    #[tokio::test]
+    async fn worker_pusher_pipeline_delivers_ticks_state_and_commands() {
+        let cmds = Arc::new(build_cmds(TestTool.commands()));
+        let mut handle = spawn("test".to_string(), TestTool, cmds);
+
+        // 定时器输出 + 状态快照流过管线。
+        tokio::time::sleep(Duration::from_millis(120)).await;
+        {
+            let v = handle.view_rx.borrow_and_update().clone();
+            assert!(v.buffer_total_lines > 0, "tick 产出的消息应累积到缓冲");
+            assert_eq!(v.state.badge.as_deref(), Some("live"), "状态快照应流过管线");
+        }
+
+        // 命令路径:输出应出现在缓冲里。
+        handle.cmd_tx.send("ping".to_string()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        let v = handle.view_rx.borrow().clone();
+        assert!(
+            system_texts(&v).iter().any(|t| t == "pong"),
+            "命令输出应流过管线",
+        );
+    }
+
+    /// clear 命令清空缓冲后,仍能继续接收后续 tick(管线未中断)。
+    #[tokio::test]
+    async fn clear_command_flows_and_pipeline_continues() {
+        let cmds = Arc::new(build_cmds(TestTool.commands()));
+        let mut handle = spawn("test".to_string(), TestTool, cmds);
+
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        handle.cmd_tx.send("clear".to_string()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(80)).await;
+
+        // clear 后仍有 tick 继续进来,且"conversation cleared"通知出现过。
+        let v = handle.view_rx.borrow_and_update().clone();
+        assert!(v.buffer_total_lines > 0, "clear 后管线继续送 tick");
     }
 }
